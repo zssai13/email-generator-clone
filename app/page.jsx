@@ -29,7 +29,22 @@ export default function Home() {
   const [templateCopied, setTemplateCopied] = useState(false);
   const [templateUsage, setTemplateUsage] = useState(null);
 
-  // Model options for dropdown
+  // State for Tab 3: Text Email Generator
+  const [textEmailModel, setTextEmailModel] = useState('gpt-5.2');
+  const [businessInfoContent, setBusinessInfoContent] = useState('');
+  const [businessInfoFileName, setBusinessInfoFileName] = useState('');
+  const [guidelinesContent, setGuidelinesContent] = useState('');
+  const [guidelinesFileName, setGuidelinesFileName] = useState('');
+  const [textEmailSystemPrompt, setTextEmailSystemPrompt] = useState('');
+  const [textEmailUserPrompt, setTextEmailUserPrompt] = useState('');
+  const [textEmailLoading, setTextEmailLoading] = useState(false);
+  const [textEmailError, setTextEmailError] = useState('');
+  const [textEmailStatus, setTextEmailStatus] = useState('');
+  const [generatedTextEmail, setGeneratedTextEmail] = useState(null);
+  const [textEmailUsage, setTextEmailUsage] = useState(null);
+  const [textEmailCopied, setTextEmailCopied] = useState(false);
+
+  // Model options for Tab 2 dropdown
   const modelOptions = [
     { value: 'claude-opus-4-5', label: 'Claude Opus 4.5', provider: 'anthropic' },
     { value: 'claude-sonnet-4-5', label: 'Claude Sonnet 4.5', provider: 'anthropic' },
@@ -39,6 +54,12 @@ export default function Home() {
     { value: 'claude-sonnet-extract-mini-generate', label: 'Claude Sonnet Extract + Mini Generate', provider: 'claude-hybrid' },
     { value: 'claude-haiku-extract-mini-generate', label: 'Claude Haiku Extract + Mini Generate', provider: 'claude-hybrid' },
     { value: 'manual-extract-mini-refine-generate', label: 'Manual Extract + Mini Refine + Generate (Cheapest)', provider: 'manual-hybrid' }
+  ];
+
+  // Model options for Tab 3 (Text Email Generator)
+  const textEmailModelOptions = [
+    { value: 'gpt-5.2', label: 'GPT-5.2' },
+    { value: 'gpt-5.2-pro', label: 'GPT-5.2 Pro' }
   ];
 
   const parseEmails = (text) => {
@@ -287,6 +308,173 @@ export default function Home() {
     URL.revokeObjectURL(url);
   };
 
+  // File upload handler for Tab 3 - Business Info
+  const handleBusinessInfoUpload = (event) => {
+    const file = event.target.files[0];
+    if (!file) {
+      setBusinessInfoContent('');
+      setBusinessInfoFileName('');
+      return;
+    }
+
+    const fileName = file.name.toLowerCase();
+    if (!fileName.endsWith('.md')) {
+      setTextEmailError('Please upload a valid Markdown file (.md)');
+      event.target.value = '';
+      return;
+    }
+
+    setBusinessInfoFileName(file.name);
+    setTextEmailError('');
+    setGeneratedTextEmail(null);
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const content = e.target.result;
+      if (!content || typeof content !== 'string' || content.trim().length === 0) {
+        setTextEmailError('Failed to read file content or file is empty');
+        setBusinessInfoContent('');
+        setBusinessInfoFileName('');
+        event.target.value = '';
+        return;
+      }
+      setBusinessInfoContent(content);
+    };
+    reader.onerror = () => {
+      setTextEmailError('Error reading file. Please try again.');
+      setBusinessInfoContent('');
+      setBusinessInfoFileName('');
+    };
+    reader.readAsText(file);
+  };
+
+  // File upload handler for Tab 3 - Email Guidelines
+  const handleGuidelinesUpload = (event) => {
+    const file = event.target.files[0];
+    if (!file) {
+      setGuidelinesContent('');
+      setGuidelinesFileName('');
+      return;
+    }
+
+    const fileName = file.name.toLowerCase();
+    if (!fileName.endsWith('.md')) {
+      setTextEmailError('Please upload a valid Markdown file (.md)');
+      event.target.value = '';
+      return;
+    }
+
+    setGuidelinesFileName(file.name);
+    setTextEmailError('');
+    setGeneratedTextEmail(null);
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const content = e.target.result;
+      if (!content || typeof content !== 'string' || content.trim().length === 0) {
+        setTextEmailError('Failed to read file content or file is empty');
+        setGuidelinesContent('');
+        setGuidelinesFileName('');
+        event.target.value = '';
+        return;
+      }
+      setGuidelinesContent(content);
+    };
+    reader.onerror = () => {
+      setTextEmailError('Error reading file. Please try again.');
+      setGuidelinesContent('');
+      setGuidelinesFileName('');
+    };
+    reader.readAsText(file);
+  };
+
+  // Generate text email for Tab 3
+  const generateTextEmail = async () => {
+    // Validation
+    if (!businessInfoContent.trim()) {
+      setTextEmailError('Please upload a Business Info markdown file');
+      return;
+    }
+
+    if (!guidelinesContent.trim()) {
+      setTextEmailError('Please upload an Email Guidelines markdown file');
+      return;
+    }
+
+    if (!textEmailUserPrompt.trim()) {
+      setTextEmailError('Please enter a user prompt describing the email you want to generate');
+      return;
+    }
+
+    setTextEmailLoading(true);
+    setTextEmailError('');
+    setGeneratedTextEmail(null);
+    setTextEmailUsage(null);
+    setTextEmailStatus(`Generating with ${textEmailModelOptions.find(m => m.value === textEmailModel)?.label || textEmailModel}...`);
+    setTextEmailCopied(false);
+
+    try {
+      const response = await fetch('/api/generate-text-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          businessInfo: businessInfoContent.trim(),
+          emailGuidelines: guidelinesContent.trim(),
+          systemPrompt: textEmailSystemPrompt.trim(),
+          userPrompt: textEmailUserPrompt.trim(),
+          model: textEmailModel
+        })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok || data.error) {
+        throw new Error(data.error || 'Failed to generate email');
+      }
+
+      if (!data.content || data.content.length < 10) {
+        throw new Error('Generated email appears to be invalid or too short');
+      }
+
+      if (data.usage) {
+        setTextEmailUsage(data.usage);
+        console.log('Text Email Usage:', {
+          total_tokens: data.usage.total_tokens,
+          input_tokens: data.usage.input_tokens,
+          output_tokens: data.usage.output_tokens,
+          estimated_cost_usd: `$${data.usage.estimated_cost_usd?.toFixed(6) || 'N/A'}`,
+          generation_time_ms: data.usage.generation_time_ms
+        });
+      }
+
+      setGeneratedTextEmail(data.content);
+      setTextEmailStatus('');
+    } catch (err) {
+      setTextEmailError(err.message);
+      setTextEmailStatus('');
+    } finally {
+      setTextEmailLoading(false);
+    }
+  };
+
+  // Copy text email
+  const copyTextEmail = async (text) => {
+    await navigator.clipboard.writeText(text);
+    setTextEmailCopied(true);
+    setTimeout(() => setTextEmailCopied(false), 2000);
+  };
+
+  // Download text email
+  const downloadTextEmail = (text) => {
+    const blob = new Blob([text], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `text-email-${Date.now()}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
       {/* Header */}
@@ -320,8 +508,21 @@ export default function Home() {
                   : 'text-slate-400 hover:text-slate-300'
               }`}
             >
-              New Feature
+              Template-Based
               {activeTab === 'new-feature' && (
+                <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-white"></span>
+              )}
+            </button>
+            <button
+              onClick={() => setActiveTab('text-email')}
+              className={`px-4 py-2 text-sm font-medium transition-all relative ${
+                activeTab === 'text-email'
+                  ? 'text-white'
+                  : 'text-slate-400 hover:text-slate-300'
+              }`}
+            >
+              Text Email Generator
+              {activeTab === 'text-email' && (
                 <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-white"></span>
               )}
             </button>
@@ -737,6 +938,263 @@ export default function Home() {
                 </p>
                 <div className="inline-block px-4 py-2 bg-slate-100 rounded-lg text-xs text-slate-600 font-mono">
                   Template-based generation • Custom prompts • Gmail-ready HTML
+                </div>
+              </div>
+            )}
+          </>
+        )}
+
+        {/* Tab 3: Text Email Generator */}
+        {activeTab === 'text-email' && (
+          <>
+            {/* Input Card */}
+            <div className="bg-white rounded-2xl shadow-lg border border-slate-200 p-6 mb-6">
+              {/* Model Selector */}
+              <div className="mb-4">
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
+                  AI Model
+                </label>
+                <select
+                  value={textEmailModel}
+                  onChange={(e) => setTextEmailModel(e.target.value)}
+                  className="w-full md:w-64 px-4 py-3 border-2 border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-800 text-sm bg-white transition-all cursor-pointer"
+                >
+                  {textEmailModelOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* File Uploads - 2 columns */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                {/* Business Info Upload */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
+                    Business Info (RAG Data) <span className="text-red-500">*</span>
+                  </label>
+                  <div className="relative">
+                    <input
+                      type="file"
+                      accept=".md"
+                      onChange={handleBusinessInfoUpload}
+                      className="hidden"
+                      id="business-info-input"
+                    />
+                    <label
+                      htmlFor="business-info-input"
+                      className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-800 focus:border-transparent text-sm transition-all cursor-pointer bg-white hover:bg-slate-50 flex items-center justify-between"
+                    >
+                      <span className="text-slate-600">
+                        {businessInfoFileName || 'Choose .md file...'}
+                      </span>
+                      <span className="text-slate-400">📎</span>
+                    </label>
+                  </div>
+                  {businessInfoFileName && (
+                    <p className="text-xs text-green-600 mt-1">✓ {businessInfoFileName}</p>
+                  )}
+                </div>
+
+                {/* Email Guidelines Upload */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
+                    Email Guidelines & Templates <span className="text-red-500">*</span>
+                  </label>
+                  <div className="relative">
+                    <input
+                      type="file"
+                      accept=".md"
+                      onChange={handleGuidelinesUpload}
+                      className="hidden"
+                      id="guidelines-input"
+                    />
+                    <label
+                      htmlFor="guidelines-input"
+                      className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-800 focus:border-transparent text-sm transition-all cursor-pointer bg-white hover:bg-slate-50 flex items-center justify-between"
+                    >
+                      <span className="text-slate-600">
+                        {guidelinesFileName || 'Choose .md file...'}
+                      </span>
+                      <span className="text-slate-400">📎</span>
+                    </label>
+                  </div>
+                  {guidelinesFileName && (
+                    <p className="text-xs text-green-600 mt-1">✓ {guidelinesFileName}</p>
+                  )}
+                </div>
+              </div>
+
+              {/* System Prompt */}
+              <div className="mb-4">
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
+                  System Prompt <span className="text-slate-400 font-normal normal-case">(applies to all emails)</span>
+                </label>
+                <textarea
+                  value={textEmailSystemPrompt}
+                  onChange={(e) => {
+                    setTextEmailSystemPrompt(e.target.value);
+                    if (textEmailError) setTextEmailError('');
+                  }}
+                  placeholder="Enter your system prompt here... (e.g., 'You are a professional sales representative for HYROS. Your writing style is concise, personalized, and value-focused.')"
+                  rows={4}
+                  className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-800 focus:border-transparent text-sm transition-all resize-none"
+                />
+              </div>
+
+              {/* User Prompt */}
+              <div className="mb-4">
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
+                  User Prompt <span className="text-red-500">*</span> <span className="text-slate-400 font-normal normal-case">(specific to this email)</span>
+                </label>
+                <textarea
+                  value={textEmailUserPrompt}
+                  onChange={(e) => {
+                    setTextEmailUserPrompt(e.target.value);
+                    if (textEmailError) setTextEmailError('');
+                  }}
+                  placeholder="Enter what email you want to generate... (e.g., 'Write an introduction email to Sarah Johnson, CEO of TechCorp. Reference their recent Series B funding and ask about their marketing attribution challenges.')"
+                  rows={4}
+                  className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-800 focus:border-transparent text-sm transition-all resize-none"
+                />
+              </div>
+
+              {/* Generate Button */}
+              <div className="flex flex-wrap items-center gap-4">
+                <button
+                  onClick={generateTextEmail}
+                  disabled={textEmailLoading}
+                  className="px-8 py-3 bg-gradient-to-r from-slate-800 to-slate-900 text-white text-sm font-bold uppercase tracking-wide rounded-xl hover:from-slate-700 hover:to-slate-800 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-lg hover:shadow-xl"
+                >
+                  {textEmailLoading ? (
+                    <span className="flex items-center gap-2">
+                      <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                      </svg>
+                      Generating...
+                    </span>
+                  ) : (
+                    '🚀 Generate Email'
+                  )}
+                </button>
+
+                {textEmailStatus && (
+                  <span className="text-sm text-slate-500 flex items-center gap-2">
+                    <span className="inline-block w-2 h-2 bg-blue-500 rounded-full animate-pulse" />
+                    {textEmailStatus}
+                  </span>
+                )}
+              </div>
+
+              {textEmailError && (
+                <div className="mt-4 p-4 bg-red-50 border-2 border-red-200 rounded-xl text-red-700 text-sm">
+                  <strong>Error:</strong> {textEmailError}
+                </div>
+              )}
+            </div>
+
+            {/* Results - Gmail Simulation */}
+            {generatedTextEmail && (
+              <div className="bg-white rounded-2xl shadow-lg border border-slate-200 overflow-hidden">
+                {/* Usage Stats */}
+                {textEmailUsage && (
+                  <div className="px-4 pt-4 pb-2 border-b border-slate-100">
+                    <div className="flex flex-wrap items-center gap-4 text-sm">
+                      <div className="flex items-center gap-2">
+                        <span className="text-slate-600 font-medium">Tokens:</span>
+                        <span className="text-slate-800 font-bold">{textEmailUsage.total_tokens?.toLocaleString() || 'N/A'}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-slate-600 font-medium">Cost:</span>
+                        <span className="text-green-600 font-bold">
+                          ${textEmailUsage.estimated_cost_usd?.toFixed(6) || '0.000000'}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-slate-600 font-medium">Time:</span>
+                        <span className="text-slate-800 font-bold">
+                          {textEmailUsage.generation_time_ms ? `${(textEmailUsage.generation_time_ms / 1000).toFixed(2)}s` : 'N/A'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Header */}
+                <div className="flex flex-wrap items-center justify-between gap-4 p-4 border-b border-slate-100 bg-slate-50">
+                  <div>
+                    <h2 className="font-bold text-slate-800 text-lg">📧 Email Preview</h2>
+                    <p className="text-xs text-slate-500">Plain text • Copy/paste ready</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => copyTextEmail(generatedTextEmail)}
+                      className={`px-5 py-2.5 text-sm font-semibold rounded-xl transition-all ${
+                        textEmailCopied
+                          ? 'bg-green-500 text-white'
+                          : 'border-2 border-slate-300 hover:bg-slate-100'
+                      }`}
+                    >
+                      {textEmailCopied ? '✓ Copied!' : '📋 Copy'}
+                    </button>
+                    <button
+                      onClick={() => downloadTextEmail(generatedTextEmail)}
+                      className="px-5 py-2.5 text-sm font-semibold bg-slate-900 text-white rounded-xl hover:bg-slate-800 transition-all"
+                    >
+                      ⬇ Download
+                    </button>
+                  </div>
+                </div>
+
+                {/* Gmail-style Email Preview */}
+                <div className="p-6 bg-gradient-to-b from-slate-100 to-slate-50">
+                  <div className="max-w-[620px] mx-auto bg-white shadow-2xl rounded-lg overflow-hidden border border-slate-200">
+                    {/* Gmail-like header */}
+                    <div className="bg-slate-50 px-6 py-3 border-b border-slate-200">
+                      <div className="flex items-center gap-2 text-slate-500 text-xs">
+                        <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                          <path d="M2.003 5.884L10 9.882l7.997-3.998A2 2 0 0016 4H4a2 2 0 00-1.997 1.884z" />
+                          <path d="M18 8.118l-8 4-8-4V14a2 2 0 002 2h12a2 2 0 002-2V8.118z" />
+                        </svg>
+                        <span>Email Preview</span>
+                      </div>
+                    </div>
+
+                    {/* Email Content */}
+                    <div className="px-6 py-6">
+                      <pre className="font-sans text-sm text-slate-800 whitespace-pre-wrap leading-relaxed">
+                        {generatedTextEmail}
+                      </pre>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Raw Text View */}
+                <details className="border-t-2 border-slate-100">
+                  <summary className="p-4 cursor-pointer text-sm font-semibold text-slate-600 hover:text-slate-900 hover:bg-slate-50">
+                    📝 View Raw Text
+                  </summary>
+                  <div className="p-4 bg-slate-900 overflow-auto max-h-80">
+                    <pre className="text-xs text-emerald-400 whitespace-pre-wrap font-mono">
+                      {generatedTextEmail}
+                    </pre>
+                  </div>
+                </details>
+              </div>
+            )}
+
+            {/* Empty State */}
+            {!textEmailLoading && !generatedTextEmail && !textEmailError && (
+              <div className="bg-white rounded-2xl shadow-lg border border-slate-200 p-12 text-center">
+                <div className="text-6xl mb-4">✉️</div>
+                <h3 className="text-xl font-bold text-slate-800 mb-2">Ready to generate text emails</h3>
+                <p className="text-slate-500 text-sm max-w-md mx-auto mb-6">
+                  Upload your business research and email guidelines as markdown files, then enter your prompts to generate personalized text emails.
+                </p>
+                <div className="inline-block px-4 py-2 bg-slate-100 rounded-lg text-xs text-slate-600 font-mono">
+                  GPT-5.2 powered • RAG-enhanced • Plain text output
                 </div>
               </div>
             )}
