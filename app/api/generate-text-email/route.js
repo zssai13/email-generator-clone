@@ -11,16 +11,40 @@ function getOpenAIClient() {
   return new OpenAI({ apiKey });
 }
 
-// Model configuration for GPT-5.2 series
+// Initialize xAI client lazily (OpenAI-compatible)
+function getXAIClient() {
+  const apiKey = process.env.XAI_API_KEY;
+
+  if (!apiKey) {
+    throw new Error('xAI API key is not configured. Please set XAI_API_KEY environment variable.');
+  }
+
+  return new OpenAI({
+    apiKey,
+    baseURL: 'https://api.x.ai/v1'
+  });
+}
+
+// Model configuration
 function getModelConfig(model) {
   const configs = {
     'gpt-5.2': {
       modelId: 'gpt-5.2',
-      maxOutputTokens: 4000
+      maxOutputTokens: 4000,
+      provider: 'openai',
+      apiType: 'responses'
     },
     'gpt-5.2-pro': {
       modelId: 'gpt-5.2-pro',
-      maxOutputTokens: 4000
+      maxOutputTokens: 4000,
+      provider: 'openai',
+      apiType: 'responses'
+    },
+    'grok-4-1-fast': {
+      modelId: 'grok-4-1-fast',
+      maxOutputTokens: 4000,
+      provider: 'xai',
+      apiType: 'chat'
     }
   };
   return configs[model] || configs['gpt-5.2'];
@@ -56,17 +80,42 @@ The email should be ready to copy and paste directly into an email client.`;
   return input;
 }
 
+// Build messages for Chat Completions API (used by xAI/Grok)
+function buildChatMessages(businessInfo, guidelines, systemPrompt, userPrompt) {
+  const systemContent = `You are an expert email copywriter. Your task is to generate high-quality, personalized emails.
+
+${systemPrompt ? `## Additional Instructions\n${systemPrompt.trim()}\n\n` : ''}## Business Context (RAG Data)
+${businessInfo.trim()}
+
+## Email Guidelines & Templates
+${guidelines.trim()}
+
+Generate a complete plain text email including the Subject line at the top.
+Format the output exactly like this:
+Subject: [Your subject line here]
+
+[Email body here]
+
+The email should be ready to copy and paste directly into an email client.`;
+
+  return [
+    { role: 'system', content: systemContent },
+    { role: 'user', content: userPrompt.trim() }
+  ];
+}
+
 // Calculate cost based on model and usage
 function calculateCost(modelId, usage) {
-  // Placeholder pricing - update with actual GPT-5.2 pricing when available
+  // Pricing per 1K tokens (placeholder values - update with actual pricing)
   const pricing = {
-    'gpt-5.2': { input: 0.002, output: 0.008 },      // per 1K tokens
-    'gpt-5.2-pro': { input: 0.010, output: 0.040 }   // per 1K tokens
+    'gpt-5.2': { input: 0.002, output: 0.008 },
+    'gpt-5.2-pro': { input: 0.010, output: 0.040 },
+    'grok-4-1-fast': { input: 0.003, output: 0.015 }  // Placeholder xAI pricing
   };
 
   const modelPricing = pricing[modelId] || pricing['gpt-5.2'];
-  const inputTokens = usage?.input_tokens || 0;
-  const outputTokens = usage?.output_tokens || 0;
+  const inputTokens = usage?.input_tokens || usage?.prompt_tokens || 0;
+  const outputTokens = usage?.output_tokens || usage?.completion_tokens || 0;
 
   const inputCost = (inputTokens / 1000) * modelPricing.input;
   const outputCost = (outputTokens / 1000) * modelPricing.output;
@@ -74,12 +123,11 @@ function calculateCost(modelId, usage) {
   return inputCost + outputCost;
 }
 
-// Generate text email using OpenAI Responses API
-async function generateTextEmail(openaiClient, config, input) {
+// Generate text email using OpenAI Responses API (GPT-5.2)
+async function generateWithResponsesAPI(client, config, input) {
   const startTime = Date.now();
 
-  // Use the new Responses API
-  const response = await openaiClient.responses.create({
+  const response = await client.responses.create({
     model: config.modelId,
     input: input,
     max_output_tokens: config.maxOutputTokens
@@ -87,7 +135,6 @@ async function generateTextEmail(openaiClient, config, input) {
 
   const generationTimeMs = Date.now() - startTime;
 
-  // Extract usage data
   const usage = {
     input_tokens: response.usage?.input_tokens || 0,
     output_tokens: response.usage?.output_tokens || 0,
@@ -96,7 +143,7 @@ async function generateTextEmail(openaiClient, config, input) {
     generation_time_ms: generationTimeMs
   };
 
-  console.log('Text Email Generation Complete:', {
+  console.log('Text Email Generation Complete (Responses API):', {
     model: config.modelId,
     tokens: usage.total_tokens,
     cost: `$${usage.estimated_cost_usd.toFixed(6)}`,
@@ -109,12 +156,47 @@ async function generateTextEmail(openaiClient, config, input) {
   };
 }
 
+// Generate text email using Chat Completions API (xAI/Grok)
+async function generateWithChatAPI(client, config, messages) {
+  const startTime = Date.now();
+
+  const response = await client.chat.completions.create({
+    model: config.modelId,
+    messages: messages,
+    max_tokens: config.maxOutputTokens
+  });
+
+  const generationTimeMs = Date.now() - startTime;
+
+  const usage = {
+    input_tokens: response.usage?.prompt_tokens || 0,
+    output_tokens: response.usage?.completion_tokens || 0,
+    total_tokens: response.usage?.total_tokens || 0,
+    estimated_cost_usd: calculateCost(config.modelId, {
+      prompt_tokens: response.usage?.prompt_tokens,
+      completion_tokens: response.usage?.completion_tokens
+    }),
+    generation_time_ms: generationTimeMs
+  };
+
+  console.log('Text Email Generation Complete (Chat API):', {
+    model: config.modelId,
+    tokens: usage.total_tokens,
+    cost: `$${usage.estimated_cost_usd.toFixed(6)}`,
+    time: `${generationTimeMs}ms`
+  });
+
+  return {
+    content: response.choices[0]?.message?.content || '',
+    usage
+  };
+}
+
 // Validate markdown content
 function isValidMarkdown(content) {
   if (!content || typeof content !== 'string') {
     return false;
   }
-  // Basic validation - ensure it has some content
   return content.trim().length > 0;
 }
 
@@ -123,7 +205,7 @@ export async function POST(request) {
     const { businessInfo, emailGuidelines, systemPrompt, userPrompt, model } = await request.json();
 
     // Validate model
-    const validModels = ['gpt-5.2', 'gpt-5.2-pro'];
+    const validModels = ['gpt-5.2', 'gpt-5.2-pro', 'grok-4-1-fast'];
     const selectedModel = model || 'gpt-5.2';
 
     if (!validModels.includes(selectedModel)) {
@@ -172,27 +254,41 @@ export async function POST(request) {
       }, { status: 400 });
     }
 
-    // Check OpenAI API key
-    if (!process.env.OPENAI_API_KEY) {
+    // Get model config
+    const modelConfig = getModelConfig(selectedModel);
+
+    // Check API key based on provider
+    if (modelConfig.provider === 'openai' && !process.env.OPENAI_API_KEY) {
       return Response.json({
         error: 'OpenAI API key is required but not configured. Please add OPENAI_API_KEY to your environment variables.'
       }, { status: 500 });
     }
 
-    // Get OpenAI client and model config
-    const openaiClient = getOpenAIClient();
-    const modelConfig = getModelConfig(selectedModel);
+    if (modelConfig.provider === 'xai' && !process.env.XAI_API_KEY) {
+      return Response.json({
+        error: 'xAI API key is required but not configured. Please add XAI_API_KEY to your environment variables.'
+      }, { status: 500 });
+    }
 
-    // Build the input prompt
-    const input = buildTextEmailInput(
-      businessInfo,
-      emailGuidelines,
-      systemPrompt || '',
-      userPrompt
-    );
+    let result;
 
-    // Generate the email
-    const result = await generateTextEmail(openaiClient, modelConfig, input);
+    // Route to appropriate API based on provider and API type
+    if (modelConfig.provider === 'xai') {
+      // Use xAI client with Chat Completions API
+      const xaiClient = getXAIClient();
+      const messages = buildChatMessages(businessInfo, emailGuidelines, systemPrompt || '', userPrompt);
+      result = await generateWithChatAPI(xaiClient, modelConfig, messages);
+    } else if (modelConfig.apiType === 'responses') {
+      // Use OpenAI Responses API (GPT-5.2)
+      const openaiClient = getOpenAIClient();
+      const input = buildTextEmailInput(businessInfo, emailGuidelines, systemPrompt || '', userPrompt);
+      result = await generateWithResponsesAPI(openaiClient, modelConfig, input);
+    } else {
+      // Fallback to Chat Completions API
+      const openaiClient = getOpenAIClient();
+      const messages = buildChatMessages(businessInfo, emailGuidelines, systemPrompt || '', userPrompt);
+      result = await generateWithChatAPI(openaiClient, modelConfig, messages);
+    }
 
     // Validate output
     if (!result.content || result.content.trim().length < 10) {
@@ -210,16 +306,16 @@ export async function POST(request) {
   } catch (error) {
     console.error('Text Email API Error:', error);
 
-    // Handle specific OpenAI errors
+    // Handle specific API errors
     if (error.message?.includes('API key')) {
       return Response.json({
-        error: 'OpenAI API key error. Please check your API key configuration.'
+        error: 'API key error. Please check your API key configuration.'
       }, { status: 500 });
     }
 
     if (error.message?.includes('model')) {
       return Response.json({
-        error: `Model error: ${error.message}. The GPT-5.2 models may not be available yet.`
+        error: `Model error: ${error.message}. The selected model may not be available.`
       }, { status: 500 });
     }
 

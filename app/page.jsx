@@ -59,7 +59,8 @@ export default function Home() {
   // Model options for Tab 3 (Text Email Generator)
   const textEmailModelOptions = [
     { value: 'gpt-5.2', label: 'GPT-5.2' },
-    { value: 'gpt-5.2-pro', label: 'GPT-5.2 Pro' }
+    { value: 'gpt-5.2-pro', label: 'GPT-5.2 Pro' },
+    { value: 'grok-4-1-fast', label: 'Grok 4.1 Fast (Reasoning)' }
   ];
 
   const parseEmails = (text) => {
