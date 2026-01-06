@@ -64,18 +64,26 @@ function extractHtml(text) {
 
 export async function POST(request) {
   try {
-    const { productUrl } = await request.json();
+    const { productUrl, customPrompt } = await request.json();
 
     if (!productUrl) {
       return Response.json({ error: 'Product URL is required' }, { status: 400 });
     }
 
-    let messages = [
-      { 
-        role: 'user', 
-        content: `Create a beautiful promotional ecommerce email for this product: ${productUrl}
+    // Build the prompt with optional custom instructions
+    let promptContent = `Create a beautiful promotional ecommerce email for this product: ${productUrl}`;
 
-Return ONLY the complete HTML starting with <!DOCTYPE html> and ending with </html>. No markdown, no code blocks, no explanations.` 
+    // Add custom prompt if provided
+    if (customPrompt && customPrompt.trim()) {
+      promptContent += `\n\nAdditional instructions: ${customPrompt.trim()}`;
+    }
+
+    promptContent += `\n\nReturn ONLY the complete HTML starting with <!DOCTYPE html> and ending with </html>. No markdown, no code blocks, no explanations.`;
+
+    let messages = [
+      {
+        role: 'user',
+        content: promptContent
       }
     ];
 

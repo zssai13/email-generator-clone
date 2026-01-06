@@ -7,6 +7,7 @@ export default function Home() {
   const [productUrl, setProductUrl] = useState('');
   const [emailCount, setEmailCount] = useState('2');
   const [promotion, setPromotion] = useState('');
+  const [customPromptTab1, setCustomPromptTab1] = useState('');
   const [loading, setLoading] = useState(false);
   const [emails, setEmails] = useState([]);
   const [selectedEmail, setSelectedEmail] = useState(null);
@@ -100,7 +101,7 @@ export default function Home() {
       const response = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ productUrl, emailCount, promotion })
+        body: JSON.stringify({ productUrl, emailCount, promotion, customPrompt: customPromptTab1 })
       });
 
       const data = await response.json();
@@ -579,6 +580,22 @@ export default function Home() {
                 className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-800 text-sm transition-all"
               />
             </div>
+          </div>
+
+          <div className="mt-4">
+            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
+              Custom Prompt (Optional)
+            </label>
+            <textarea
+              value={customPromptTab1}
+              onChange={(e) => {
+                setCustomPromptTab1(e.target.value);
+                if (error) setError('');
+              }}
+              placeholder="e.g., Use Gmail-safe fonts (Arial, Helvetica), make the tone more casual, emphasize urgency, include a countdown timer, focus on the discount..."
+              rows={3}
+              className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-800 focus:border-transparent text-sm transition-all resize-none"
+            />
           </div>
 
           <div className="mt-5 flex flex-wrap items-center gap-4">
