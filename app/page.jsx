@@ -17,6 +17,7 @@ export default function Home() {
   const [status, setStatus] = useState('');
   const [productData, setProductData] = useState(null);
   const [diagnosticLog, setDiagnosticLog] = useState(null);
+  const [tab1Usage, setTab1Usage] = useState(null);
   
   // State for Tab 2: Template-based email generator
   const [templateProductUrl, setTemplateProductUrl] = useState('');
@@ -98,6 +99,7 @@ export default function Home() {
     setSelectedEmail(null);
     setProductData(null);
     setDiagnosticLog(null);
+    setTab1Usage(null);
     setStatus('Fetching product page...');
 
     try {
@@ -112,6 +114,9 @@ export default function Home() {
       // Capture diagnostic log regardless of success/failure
       if (data.diagnosticLog) {
         setDiagnosticLog(data.diagnosticLog);
+      }
+      if (data.usage) {
+        setTab1Usage(data.usage);
       }
 
       if (!response.ok || data.error) {
@@ -582,6 +587,8 @@ export default function Home() {
                 className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-800 text-sm bg-white transition-all cursor-pointer"
               >
                 <option value="standard">Standard (100KB)</option>
+                <option value="standard-200k">Standard (200KB)</option>
+                <option value="clean">Clean (100KB)</option>
                 <option value="smart">Smart Fetch</option>
               </select>
             </div>
@@ -717,6 +724,31 @@ export default function Home() {
             <div className="lg:col-span-9">
               {selectedEmail && (
                 <div className="bg-white rounded-2xl shadow-lg border border-slate-200 overflow-hidden">
+                  {/* Token Usage & Cost Display */}
+                  {tab1Usage && (
+                    <div className="px-4 pt-4 pb-2 border-b border-slate-100">
+                      <div className="flex flex-wrap items-center gap-4 text-sm">
+                        <div className="flex items-center gap-2">
+                          <span className="text-slate-600 font-medium">Total Tokens:</span>
+                          <span className="text-slate-800 font-bold">{tab1Usage.total_tokens?.toLocaleString() || 'N/A'}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-slate-600 font-medium">Input:</span>
+                          <span className="text-slate-800">{tab1Usage.input_tokens?.toLocaleString() || 'N/A'}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-slate-600 font-medium">Output:</span>
+                          <span className="text-slate-800">{tab1Usage.output_tokens?.toLocaleString() || 'N/A'}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-slate-600 font-medium">Est. Cost:</span>
+                          <span className="text-green-600 font-bold">
+                            ${tab1Usage.estimated_cost_usd?.toFixed(4) || '0.0000'}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                   <div className="flex flex-wrap items-center justify-between gap-4 p-4 border-b border-slate-100 bg-slate-50">
                     <div>
                       <h2 className="font-bold text-slate-800 text-lg">{selectedEmail.description}</h2>

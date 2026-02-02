@@ -304,7 +304,8 @@ async function executeTool(toolName, toolInput, fetchMethod) {
       diagnostics.httpStatus = response.status;
       const html = await response.text();
       diagnostics.htmlSizeChars = html.length;
-      diagnostics.wasTruncated = html.length > 100000;
+      const truncateLimit = fetchMethod === 'standard-200k' ? 200000 : 100000;
+      diagnostics.wasTruncated = html.length > truncateLimit;
       diagnostics.htmlPreview = html.substring(0, 500);
 
       let result;
@@ -321,6 +322,14 @@ async function executeTool(toolName, toolInput, fetchMethod) {
           imagesFound: extractedData.images.length,
           structuredData: extractedData.structuredData ? 'found' : 'not found'
         };
+      } else if (fetchMethod === 'clean') {
+        // Clean 100KB: strip boilerplate, then truncate
+        const $clean = cheerio.load(html);
+        $clean('script, style, nav, header, footer, noscript, svg, iframe').remove();
+        result = $clean.html().substring(0, 100000);
+      } else if (fetchMethod === 'standard-200k') {
+        // Standard 200KB: double the truncation limit
+        result = html.substring(0, 200000);
       } else {
         // Standard: truncate to 100KB as before
         result = html.substring(0, 100000);
@@ -457,7 +466,8 @@ export async function POST(request) {
   try {
     const { productUrl, customPrompt, fetchMethod } = await request.json();
 
-    const selectedFetchMethod = fetchMethod === 'smart' ? 'smart' : 'standard';
+    const validMethods = ['standard', 'standard-200k', 'clean', 'smart'];
+    const selectedFetchMethod = validMethods.includes(fetchMethod) ? fetchMethod : 'standard';
     generationLog.productUrl = productUrl || '';
     generationLog.fetchMethod = selectedFetchMethod;
     generationLog.customPrompt = (customPrompt && customPrompt.trim()) ? customPrompt.trim() : '(none)';
@@ -572,9 +582,20 @@ export async function POST(request) {
       parseSuccess: /^<!DOCTYPE/i.test(emailHtml) || /^<html/i.test(emailHtml)
     };
 
+    // Calculate cost (Claude Opus 4.5 pricing)
+    const OPUS_INPUT = 15.00 / 1_000_000;   // $15 per 1M input tokens
+    const OPUS_OUTPUT = 75.00 / 1_000_000;  // $75 per 1M output tokens
+    const estimatedCost = (totalInputTokens * OPUS_INPUT) + (totalOutputTokens * OPUS_OUTPUT);
+
     return Response.json({
       success: true,
       content: emailHtml,
+      usage: {
+        input_tokens: totalInputTokens,
+        output_tokens: totalOutputTokens,
+        total_tokens: totalInputTokens + totalOutputTokens,
+        estimated_cost_usd: estimatedCost
+      },
       diagnosticLog: formatLog(generationLog)
     });
 
