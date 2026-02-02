@@ -15,6 +15,7 @@ export default function Home() {
   const [copied, setCopied] = useState(false);
   const [status, setStatus] = useState('');
   const [productData, setProductData] = useState(null);
+  const [diagnosticLog, setDiagnosticLog] = useState(null);
   
   // State for Tab 2: Template-based email generator
   const [templateProductUrl, setTemplateProductUrl] = useState('');
@@ -95,6 +96,7 @@ export default function Home() {
     setEmails([]);
     setSelectedEmail(null);
     setProductData(null);
+    setDiagnosticLog(null);
     setStatus('Fetching product page...');
 
     try {
@@ -106,18 +108,23 @@ export default function Home() {
 
       const data = await response.json();
 
+      // Capture diagnostic log regardless of success/failure
+      if (data.diagnosticLog) {
+        setDiagnosticLog(data.diagnosticLog);
+      }
+
       if (!response.ok || data.error) {
         throw new Error(data.error || 'Failed to generate');
       }
 
       setStatus('Parsing emails...');
       setProductData(data.productData);
-      
+
       const parsed = parseEmails(data.content);
       if (parsed.length === 0) {
         throw new Error('Could not parse emails from response');
       }
-      
+
       setEmails(parsed);
       setSelectedEmail(parsed[0]);
       setStatus('');
@@ -141,6 +148,17 @@ export default function Home() {
     const a = document.createElement('a');
     a.href = url;
     a.download = `email-${email.id}-${email.description.toLowerCase().replace(/\s+/g, '-')}.html`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const downloadDiagnosticLog = () => {
+    if (!diagnosticLog) return;
+    const blob = new Blob([diagnosticLog], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `email-gen-log-${Date.now()}.txt`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -628,6 +646,14 @@ export default function Home() {
           {error && (
             <div className="mt-4 p-4 bg-red-50 border-2 border-red-200 rounded-xl text-red-700 text-sm">
               <strong>Error:</strong> {error}
+              {diagnosticLog && (
+                <button
+                  onClick={downloadDiagnosticLog}
+                  className="ml-3 px-3 py-1 text-xs font-semibold border border-amber-300 text-amber-700 bg-amber-50 rounded-lg hover:bg-amber-100 transition-all"
+                >
+                  Download Log
+                </button>
+              )}
             </div>
           )}
 
@@ -699,6 +725,14 @@ export default function Home() {
                       >
                         ⬇ Download
                       </button>
+                      {diagnosticLog && (
+                        <button
+                          onClick={downloadDiagnosticLog}
+                          className="px-5 py-2.5 text-sm font-semibold border-2 border-amber-300 text-amber-700 bg-amber-50 rounded-xl hover:bg-amber-100 transition-all"
+                        >
+                          📋 Download Log
+                        </button>
+                      )}
                     </div>
                   </div>
                   
