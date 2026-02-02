@@ -8,6 +8,7 @@ export default function Home() {
   const [emailCount, setEmailCount] = useState('2');
   const [promotion, setPromotion] = useState('');
   const [customPromptTab1, setCustomPromptTab1] = useState('');
+  const [fetchMethod, setFetchMethod] = useState('standard');
   const [loading, setLoading] = useState(false);
   const [emails, setEmails] = useState([]);
   const [selectedEmail, setSelectedEmail] = useState(null);
@@ -103,7 +104,7 @@ export default function Home() {
       const response = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ productUrl, emailCount, promotion, customPrompt: customPromptTab1 })
+        body: JSON.stringify({ productUrl, emailCount, promotion, customPrompt: customPromptTab1, fetchMethod })
       });
 
       const data = await response.json();
@@ -559,7 +560,7 @@ export default function Home() {
             {/* Input Card */}
             <div className="bg-white rounded-2xl shadow-lg border border-slate-200 p-6 mb-6">
           <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
-            <div className="md:col-span-6">
+            <div className="md:col-span-5">
               <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
                 Product URL
               </label>
@@ -571,7 +572,20 @@ export default function Home() {
                 className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-800 focus:border-transparent text-sm transition-all"
               />
             </div>
-            <div className="md:col-span-2">
+            <div className="md:col-span-3">
+              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
+                Fetch Method
+              </label>
+              <select
+                value={fetchMethod}
+                onChange={(e) => setFetchMethod(e.target.value)}
+                className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-800 text-sm bg-white transition-all cursor-pointer"
+              >
+                <option value="standard">Standard (100KB)</option>
+                <option value="smart">Smart Fetch</option>
+              </select>
+            </div>
+            <div className="md:col-span-1">
               <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
                 Emails
               </label>
@@ -586,7 +600,7 @@ export default function Home() {
                 <option value="4">4</option>
               </select>
             </div>
-            <div className="md:col-span-4">
+            <div className="md:col-span-3">
               <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
                 Promotion (optional)
               </label>
