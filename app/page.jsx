@@ -118,12 +118,15 @@ export default function Home() {
       });
 
       let data;
+      const contentType = response.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        const text = await response.text();
+        throw new Error(`Server error (HTTP ${response.status}): ${text.substring(0, 200)}`);
+      }
       try {
         data = await response.json();
       } catch {
-        throw new Error(response.status === 504 || response.status === 408
-          ? 'Request timed out — this model may need Vercel Pro for longer function limits'
-          : `Server returned non-JSON response (HTTP ${response.status}). The function may have timed out.`);
+        throw new Error(`Failed to parse response (HTTP ${response.status})`);
       }
 
       // Capture diagnostic log regardless of success/failure

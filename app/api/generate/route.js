@@ -1,8 +1,8 @@
 import Anthropic from '@anthropic-ai/sdk';
 import * as cheerio from 'cheerio';
 
-// Allow up to 60s on Vercel Pro (default is 10s on Hobby)
-export const maxDuration = 60;
+// Allow up to 300s on Vercel Pro (default is 10s on Hobby)
+export const maxDuration = 300;
 
 const client = new Anthropic();
 
