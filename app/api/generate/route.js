@@ -366,6 +366,7 @@ function formatLog(log) {
   output += '========================================\n';
   output += `Timestamp: ${log.timestamp}\n`;
   output += `Product URL: ${log.productUrl}\n`;
+  output += `Model: ${log.model || 'claude-opus-4-5-20251101'}\n`;
   output += `Fetch Method: ${log.fetchMethod}\n`;
   output += `Custom Prompt: ${log.customPrompt}\n`;
   output += '\n';
@@ -464,7 +465,15 @@ export async function POST(request) {
   };
 
   try {
-    const { productUrl, customPrompt, fetchMethod } = await request.json();
+    const { productUrl, customPrompt, fetchMethod, model } = await request.json();
+
+    // Model selection
+    const modelMap = {
+      'claude-opus-4-5': 'claude-opus-4-5-20251101',
+      'claude-opus-4-6': 'claude-opus-4-6-20250514'
+    };
+    const selectedModel = modelMap[model] || modelMap['claude-opus-4-5'];
+    generationLog.model = selectedModel;
 
     const validMethods = ['standard', 'standard-200k', 'clean', 'smart'];
     const selectedFetchMethod = validMethods.includes(fetchMethod) ? fetchMethod : 'standard';
@@ -504,7 +513,7 @@ export async function POST(request) {
     let totalOutputTokens = 0;
 
     let response = await client.messages.create({
-      model: 'claude-opus-4-5-20251101',
+      model: selectedModel,
       max_tokens: 16000,
       tools,
       messages
@@ -553,7 +562,7 @@ export async function POST(request) {
       ];
 
       response = await client.messages.create({
-        model: 'claude-opus-4-5-20251101',
+        model: selectedModel,
         max_tokens: 16000,
         tools,
         messages
@@ -582,9 +591,10 @@ export async function POST(request) {
       parseSuccess: /^<!DOCTYPE/i.test(emailHtml) || /^<html/i.test(emailHtml)
     };
 
-    // Calculate cost (Claude Opus 4.5 pricing)
-    const OPUS_INPUT = 15.00 / 1_000_000;   // $15 per 1M input tokens
-    const OPUS_OUTPUT = 75.00 / 1_000_000;  // $75 per 1M output tokens
+    // Calculate cost based on model
+    // Opus 4.5: $15/$75 per 1M tokens | Opus 4.6: $15/$75 per 1M tokens (update when pricing confirmed)
+    const OPUS_INPUT = 15.00 / 1_000_000;
+    const OPUS_OUTPUT = 75.00 / 1_000_000;
     const estimatedCost = (totalInputTokens * OPUS_INPUT) + (totalOutputTokens * OPUS_OUTPUT);
 
     return Response.json({
@@ -594,7 +604,8 @@ export async function POST(request) {
         input_tokens: totalInputTokens,
         output_tokens: totalOutputTokens,
         total_tokens: totalInputTokens + totalOutputTokens,
-        estimated_cost_usd: estimatedCost
+        estimated_cost_usd: estimatedCost,
+        model: selectedModel
       },
       diagnosticLog: formatLog(generationLog)
     });

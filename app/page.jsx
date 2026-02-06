@@ -9,6 +9,7 @@ export default function Home() {
   const [promotion, setPromotion] = useState('');
   const [customPromptTab1, setCustomPromptTab1] = useState('');
   const [fetchMethod, setFetchMethod] = useState('standard');
+  const [tab1Model, setTab1Model] = useState('claude-opus-4-5');
   const [loading, setLoading] = useState(false);
   const [emails, setEmails] = useState([]);
   const [selectedEmail, setSelectedEmail] = useState(null);
@@ -106,7 +107,7 @@ export default function Home() {
       const response = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ productUrl, emailCount, promotion, customPrompt: customPromptTab1, fetchMethod })
+        body: JSON.stringify({ productUrl, emailCount, promotion, customPrompt: customPromptTab1, fetchMethod, model: tab1Model })
       });
 
       const data = await response.json();
@@ -565,7 +566,7 @@ export default function Home() {
             {/* Input Card */}
             <div className="bg-white rounded-2xl shadow-lg border border-slate-200 p-6 mb-6">
           <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
-            <div className="md:col-span-5">
+            <div className="md:col-span-4">
               <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
                 Product URL
               </label>
@@ -577,7 +578,20 @@ export default function Home() {
                 className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-800 focus:border-transparent text-sm transition-all"
               />
             </div>
-            <div className="md:col-span-3">
+            <div className="md:col-span-2">
+              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
+                AI Model
+              </label>
+              <select
+                value={tab1Model}
+                onChange={(e) => setTab1Model(e.target.value)}
+                className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-800 text-sm bg-white transition-all cursor-pointer"
+              >
+                <option value="claude-opus-4-5">Opus 4.5</option>
+                <option value="claude-opus-4-6">Opus 4.6</option>
+              </select>
+            </div>
+            <div className="md:col-span-2">
               <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
                 Fetch Method
               </label>
