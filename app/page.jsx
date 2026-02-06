@@ -51,6 +51,7 @@ export default function Home() {
 
   // Model options for Tab 2 dropdown
   const modelOptions = [
+    { value: 'claude-opus-4-6', label: 'Claude Opus 4.6', provider: 'anthropic' },
     { value: 'claude-opus-4-5', label: 'Claude Opus 4.5', provider: 'anthropic' },
     { value: 'claude-sonnet-4-5', label: 'Claude Sonnet 4.5', provider: 'anthropic' },
     { value: 'gpt-4o', label: 'ChatGPT-4o', provider: 'openai' },

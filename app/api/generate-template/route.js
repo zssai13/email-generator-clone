@@ -103,10 +103,15 @@ function isValidHtml(htmlString) {
 // Get model configuration based on selected model
 function getModelConfig(model) {
   const configs = {
-    'claude-opus-4-5': { 
-      provider: 'anthropic', 
+    'claude-opus-4-6': {
+      provider: 'anthropic',
+      modelId: 'claude-opus-4-6',
+      maxTokens: 16000
+    },
+    'claude-opus-4-5': {
+      provider: 'anthropic',
       modelId: 'claude-opus-4-5-20251101',
-      maxTokens: 16000 
+      maxTokens: 16000
     },
     'claude-sonnet-4-5': { 
       provider: 'anthropic', 
@@ -1473,7 +1478,7 @@ export async function POST(request) {
     const { productUrl, emailTemplate, customPrompt, model } = await request.json();
 
     // Validate model parameter
-    const validModels = ['claude-opus-4-5', 'claude-sonnet-4-5', 'gpt-4o', 'gpt-4o-mini', 'gpt-4o-extract-mini-generate', 'claude-sonnet-extract-mini-generate', 'claude-haiku-extract-mini-generate', 'manual-extract-mini-refine-generate'];
+    const validModels = ['claude-opus-4-6', 'claude-opus-4-5', 'claude-sonnet-4-5', 'gpt-4o', 'gpt-4o-mini', 'gpt-4o-extract-mini-generate', 'claude-sonnet-extract-mini-generate', 'claude-haiku-extract-mini-generate', 'manual-extract-mini-refine-generate'];
     const selectedModel = model || 'claude-opus-4-5'; // Default to Claude Opus for backward compatibility
     
     if (!validModels.includes(selectedModel)) {
