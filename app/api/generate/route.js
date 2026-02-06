@@ -470,7 +470,7 @@ export async function POST(request) {
     // Model selection
     const modelMap = {
       'claude-opus-4-5': 'claude-opus-4-5-20251101',
-      'claude-opus-4-6': 'claude-opus-4-6-20250514'
+      'claude-opus-4-6': 'claude-opus-4-6'
     };
     const selectedModel = modelMap[model] || modelMap['claude-opus-4-5'];
     generationLog.model = selectedModel;
@@ -592,10 +592,11 @@ export async function POST(request) {
     };
 
     // Calculate cost based on model
-    // Opus 4.5: $15/$75 per 1M tokens | Opus 4.6: $15/$75 per 1M tokens (update when pricing confirmed)
-    const OPUS_INPUT = 15.00 / 1_000_000;
-    const OPUS_OUTPUT = 75.00 / 1_000_000;
-    const estimatedCost = (totalInputTokens * OPUS_INPUT) + (totalOutputTokens * OPUS_OUTPUT);
+    // Opus 4.5: $15/$75 per 1M tokens | Opus 4.6: $5/$25 per 1M tokens
+    const isOpus46 = selectedModel === 'claude-opus-4-6';
+    const INPUT_RATE  = isOpus46 ? 5.00 / 1_000_000 : 15.00 / 1_000_000;
+    const OUTPUT_RATE = isOpus46 ? 25.00 / 1_000_000 : 75.00 / 1_000_000;
+    const estimatedCost = (totalInputTokens * INPUT_RATE) + (totalOutputTokens * OUTPUT_RATE);
 
     return Response.json({
       success: true,
