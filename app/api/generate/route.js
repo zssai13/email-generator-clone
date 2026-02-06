@@ -448,6 +448,37 @@ function formatLog(log) {
   return output;
 }
 
+const EMAIL_SYSTEM_PROMPT = `You are an expert email HTML developer. Generate production-ready promotional emails that render perfectly across ALL email clients (Gmail, Outlook, Apple Mail, Yahoo, mobile).
+
+CENTERING RULES (critical):
+- Wrap everything in a <center> tag with width:100% and background color
+- Main email table: use BOTH align="center" attribute AND style="margin: 0 auto;" — never just one
+- Use MSO conditional comments to wrap the main table in a fixed-width 600px table for Outlook
+- Every <td> that contains centered content MUST have text-align: center in its inline style
+- Images: use display: block; margin: 0 auto; on the img tag AND text-align: center on the parent <td>
+- CTA buttons: wrap in a <table> with align="center" attribute
+- Never rely solely on margin: 0 auto for centering — always pair with align="center" or text-align: center
+
+LAYOUT RULES:
+- Table-based layout ONLY — no divs for structure, no flexbox, no grid
+- All styles must be inline (style="...") — do not rely on <style> blocks for critical layout
+- Set explicit widths on tables and cells (width="600" or width="100%")
+- Use max-width: 600px on the main table with width: 100% for fluid behavior
+- All images need: display: block; margin: 0 auto; width: 100%; max-width: [size]px; height: auto;
+- Use role="presentation" on layout tables, cellspacing="0" cellpadding="0" border="0"
+
+GMAIL SAFETY:
+- Gmail strips <style> blocks in non-AMP emails — all critical styles MUST be inline
+- Avoid CSS shorthand in inline styles (use padding-left, padding-right separately if needed)
+- Use simple font stacks: Arial, Helvetica, sans-serif or Georgia, Times New Roman, serif
+
+MOBILE:
+- Add a <style> block with @media queries as progressive enhancement (not required for layout)
+- Use class="email-container" on main table for responsive override
+- Stack columns on mobile with display: block !important
+
+OUTPUT: Return ONLY the raw HTML. No markdown, no code blocks, no explanation.`;
+
 export async function POST(request) {
   // Initialize diagnostic log
   const generationLog = {
@@ -498,7 +529,7 @@ export async function POST(request) {
       promptContent += `\n\nIMPORTANT: When you fetch the product page, the response will include PRE-EXTRACTED PRODUCT DATA at the top. Use this data for accurate product images, logo, title, price, and description. Always use the real logo image URL and real product image URLs provided.`;
     }
 
-    promptContent += `\n\nReturn ONLY the complete HTML starting with <!DOCTYPE html> and ending with </html>. No markdown, no code blocks, no explanations.`;
+    // Output format is handled by the system prompt
 
     generationLog.promptSent = promptContent;
 
@@ -515,6 +546,7 @@ export async function POST(request) {
     let response = await client.messages.create({
       model: selectedModel,
       max_tokens: 16000,
+      system: EMAIL_SYSTEM_PROMPT,
       tools,
       messages
     });
@@ -564,6 +596,7 @@ export async function POST(request) {
       response = await client.messages.create({
         model: selectedModel,
         max_tokens: 16000,
+        system: EMAIL_SYSTEM_PROMPT,
         tools,
         messages
       });
