@@ -117,7 +117,14 @@ export default function Home() {
         body: JSON.stringify({ productUrl, emailCount, promotion, customPrompt: customPromptTab1, fetchMethod, model: tab1Model })
       });
 
-      const data = await response.json();
+      let data;
+      try {
+        data = await response.json();
+      } catch {
+        throw new Error(response.status === 504 || response.status === 408
+          ? 'Request timed out — this model may need Vercel Pro for longer function limits'
+          : `Server returned non-JSON response (HTTP ${response.status}). The function may have timed out.`);
+      }
 
       // Capture diagnostic log regardless of success/failure
       if (data.diagnosticLog) {
