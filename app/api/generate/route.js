@@ -1,6 +1,9 @@
 import Anthropic from '@anthropic-ai/sdk';
 import * as cheerio from 'cheerio';
 
+// Allow up to 60s on Vercel Pro (default is 10s on Hobby)
+export const maxDuration = 60;
+
 const client = new Anthropic();
 
 // Define the tool Claude can use

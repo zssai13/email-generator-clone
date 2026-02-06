@@ -70,21 +70,27 @@ export default function Home() {
   ];
 
   const parseEmails = (text) => {
+    const lower = text.toLowerCase();
     let blocks = text.split(/<!-- ?EMAIL_SEPARATOR ?-->/gi)
-      .filter(block => block.includes('<!DOCTYPE html>') || block.includes('<!doctype html>'));
-    
+      .filter(block => /<!doctype html/i.test(block));
+
     if (blocks.length === 0) {
-      const htmlMatches = text.match(/<\!DOCTYPE html>[\s\S]*?<\/html>/gi);
+      const htmlMatches = text.match(/<!doctype html[\s\S]*?<\/html>/gi);
       if (htmlMatches) blocks = htmlMatches;
+    }
+
+    // Final fallback: if content has <html and </html>, treat whole thing as one email
+    if (blocks.length === 0 && lower.includes('<html') && lower.includes('</html>')) {
+      blocks = [text];
     }
 
     return blocks.map((block, index) => {
       const styleMatch = block.match(/<!-- ?(MINIMAL LUXURY|TROPICAL VIBRANT|EDITORIAL|MAGAZINE|PLAYFUL FRESH|[\w\s]+) ?-->/i);
       let styleName = styleMatch ? styleMatch[1].trim() : `Style ${index + 1}`;
-      
-      const htmlMatch = block.match(/(<\!DOCTYPE html>[\s\S]*<\/html>)/i);
+
+      const htmlMatch = block.match(/(<!doctype html[\s\S]*<\/html>)/i) || block.match(/(<html[\s\S]*<\/html>)/i);
       const html = htmlMatch ? htmlMatch[1].trim() : block.trim();
-      
+
       return { id: index + 1, description: styleName, html };
     }).filter(e => e.html.length > 100);
   };
