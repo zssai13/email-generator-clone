@@ -67,7 +67,8 @@ export default function Home() {
   const textEmailModelOptions = [
     { value: 'gpt-5.2', label: 'GPT-5.2' },
     { value: 'gpt-5.2-pro', label: 'GPT-5.2 Pro' },
-    { value: 'grok-4-1-fast', label: 'Grok 4.1 Fast (Reasoning)' }
+    { value: 'grok-4-1-fast', label: 'Grok 4.1 Fast (Reasoning)' },
+    { value: 'claude-opus-4-6', label: 'Claude Opus 4.6' }
   ];
 
   const parseEmails = (text) => {

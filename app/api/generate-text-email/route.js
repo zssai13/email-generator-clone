@@ -1,4 +1,16 @@
 import OpenAI from 'openai';
+import Anthropic from '@anthropic-ai/sdk';
+
+// Initialize Anthropic client lazily
+function getAnthropicClient() {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+
+  if (!apiKey) {
+    throw new Error('Anthropic API key is not configured. Please set ANTHROPIC_API_KEY environment variable.');
+  }
+
+  return new Anthropic({ apiKey });
+}
 
 // Initialize OpenAI client lazily
 function getOpenAIClient() {
@@ -45,6 +57,12 @@ function getModelConfig(model) {
       maxOutputTokens: 4000,
       provider: 'xai',
       apiType: 'chat'
+    },
+    'claude-opus-4-6': {
+      modelId: 'claude-opus-4-6',
+      maxOutputTokens: 4000,
+      provider: 'anthropic',
+      apiType: 'messages'
     }
   };
   return configs[model] || configs['gpt-5.2'];
@@ -110,7 +128,8 @@ function calculateCost(modelId, usage) {
   const pricing = {
     'gpt-5.2': { input: 0.002, output: 0.008 },
     'gpt-5.2-pro': { input: 0.010, output: 0.040 },
-    'grok-4-1-fast': { input: 0.003, output: 0.015 }  // Placeholder xAI pricing
+    'grok-4-1-fast': { input: 0.003, output: 0.015 },  // Placeholder xAI pricing
+    'claude-opus-4-6': { input: 0.005, output: 0.025 }  // $5/$25 per 1M tokens
   };
 
   const modelPricing = pricing[modelId] || pricing['gpt-5.2'];
@@ -192,6 +211,63 @@ async function generateWithChatAPI(client, config, messages) {
   };
 }
 
+// Generate text email using Anthropic Messages API (Claude Opus 4.6)
+async function generateWithAnthropicAPI(config, businessInfo, guidelines, systemPrompt, userPrompt) {
+  const anthropicClient = getAnthropicClient();
+  const startTime = Date.now();
+
+  // Build system prompt for Claude
+  const systemContent = `You are an expert email copywriter. Your task is to generate high-quality, personalized emails.
+
+${systemPrompt ? `## Additional Instructions\n${systemPrompt.trim()}\n\n` : ''}## Business Context (RAG Data)
+${businessInfo.trim()}
+
+## Email Guidelines & Templates
+${guidelines.trim()}
+
+Generate a complete plain text email including the Subject line at the top.
+Format the output exactly like this:
+Subject: [Your subject line here]
+
+[Email body here]
+
+The email should be ready to copy and paste directly into an email client.`;
+
+  const response = await anthropicClient.messages.create({
+    model: config.modelId,
+    max_tokens: config.maxOutputTokens,
+    system: systemContent,
+    messages: [{ role: 'user', content: userPrompt.trim() }]
+  });
+
+  const generationTimeMs = Date.now() - startTime;
+
+  const inputTokens = response.usage?.input_tokens || 0;
+  const outputTokens = response.usage?.output_tokens || 0;
+
+  const usage = {
+    input_tokens: inputTokens,
+    output_tokens: outputTokens,
+    total_tokens: inputTokens + outputTokens,
+    estimated_cost_usd: calculateCost(config.modelId, { input_tokens: inputTokens, output_tokens: outputTokens }),
+    generation_time_ms: generationTimeMs
+  };
+
+  const content = response.content
+    .filter(block => block.type === 'text')
+    .map(block => block.text)
+    .join('\n');
+
+  console.log('Text Email Generation Complete (Anthropic API):', {
+    model: config.modelId,
+    tokens: usage.total_tokens,
+    cost: `$${usage.estimated_cost_usd.toFixed(6)}`,
+    time: `${generationTimeMs}ms`
+  });
+
+  return { content, usage };
+}
+
 // Validate markdown content
 function isValidMarkdown(content) {
   if (!content || typeof content !== 'string') {
@@ -205,7 +281,7 @@ export async function POST(request) {
     const { businessInfo, emailGuidelines, systemPrompt, userPrompt, model } = await request.json();
 
     // Validate model
-    const validModels = ['gpt-5.2', 'gpt-5.2-pro', 'grok-4-1-fast'];
+    const validModels = ['gpt-5.2', 'gpt-5.2-pro', 'grok-4-1-fast', 'claude-opus-4-6'];
     const selectedModel = model || 'gpt-5.2';
 
     if (!validModels.includes(selectedModel)) {
@@ -270,10 +346,19 @@ export async function POST(request) {
       }, { status: 500 });
     }
 
+    if (modelConfig.provider === 'anthropic' && !process.env.ANTHROPIC_API_KEY) {
+      return Response.json({
+        error: 'Anthropic API key is required but not configured. Please add ANTHROPIC_API_KEY to your environment variables.'
+      }, { status: 500 });
+    }
+
     let result;
 
     // Route to appropriate API based on provider and API type
-    if (modelConfig.provider === 'xai') {
+    if (modelConfig.provider === 'anthropic') {
+      // Use Anthropic Messages API (Claude)
+      result = await generateWithAnthropicAPI(modelConfig, businessInfo, emailGuidelines, systemPrompt || '', userPrompt);
+    } else if (modelConfig.provider === 'xai') {
       // Use xAI client with Chat Completions API
       const xaiClient = getXAIClient();
       const messages = buildChatMessages(businessInfo, emailGuidelines, systemPrompt || '', userPrompt);
