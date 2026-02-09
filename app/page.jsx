@@ -59,7 +59,8 @@ export default function Home() {
     { value: 'gpt-4o-extract-mini-generate', label: 'GPT-4o Extract + Mini Generate', provider: 'openai-hybrid' },
     { value: 'claude-sonnet-extract-mini-generate', label: 'Claude Sonnet Extract + Mini Generate', provider: 'claude-hybrid' },
     { value: 'claude-haiku-extract-mini-generate', label: 'Claude Haiku Extract + Mini Generate', provider: 'claude-hybrid' },
-    { value: 'manual-extract-mini-refine-generate', label: 'Manual Extract + Mini Refine + Generate (Cheapest)', provider: 'manual-hybrid' }
+    { value: 'manual-extract-mini-refine-generate', label: 'Manual Extract + Mini Refine + Generate (Cheapest)', provider: 'manual-hybrid' },
+    { value: 'manual-extract-opus-refine-generate', label: 'Manual Extract + Opus 4.6 Refine + Generate', provider: 'manual-opus-hybrid' }
   ];
 
   // Model options for Tab 3 (Text Email Generator)
@@ -283,6 +284,8 @@ export default function Home() {
       setTemplateStatus('Step 1: Extracting product data with Claude Haiku...');
     } else if (selectedModel === 'manual-extract-mini-refine-generate') {
       setTemplateStatus('Step 1: Manually extracting product data...');
+    } else if (selectedModel === 'manual-extract-opus-refine-generate') {
+      setTemplateStatus('Step 1: Manually extracting product data → Opus 4.6 refine + generate...');
     } else {
       setTemplateStatus(`Generating with ${selectedModelLabel}...`);
     }
