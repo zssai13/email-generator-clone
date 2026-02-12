@@ -80,8 +80,10 @@ function buildTextEmailInput(businessInfo, guidelines, systemPrompt, userPrompt)
   // Add business context
   input += `## Business Context (RAG Data)\n${businessInfo.trim()}\n\n`;
 
-  // Add email guidelines
-  input += `## Email Guidelines & Templates\n${guidelines.trim()}\n\n`;
+  // Add email guidelines (if provided)
+  if (guidelines && guidelines.trim()) {
+    input += `## Email Guidelines & Templates\n${guidelines.trim()}\n\n`;
+  }
 
   // Add user task
   input += `## Your Task\n${userPrompt.trim()}\n\n`;
@@ -104,9 +106,7 @@ function buildChatMessages(businessInfo, guidelines, systemPrompt, userPrompt) {
 
 ${systemPrompt ? `## Additional Instructions\n${systemPrompt.trim()}\n\n` : ''}## Business Context (RAG Data)
 ${businessInfo.trim()}
-
-## Email Guidelines & Templates
-${guidelines.trim()}
+${guidelines?.trim() ? `\n## Email Guidelines & Templates\n${guidelines.trim()}` : ''}
 
 Generate a complete plain text email including the Subject line at the top.
 Format the output exactly like this:
@@ -221,9 +221,7 @@ async function generateWithAnthropicAPI(config, businessInfo, guidelines, system
 
 ${systemPrompt ? `## Additional Instructions\n${systemPrompt.trim()}\n\n` : ''}## Business Context (RAG Data)
 ${businessInfo.trim()}
-
-## Email Guidelines & Templates
-${guidelines.trim()}
+${guidelines?.trim() ? `\n## Email Guidelines & Templates\n${guidelines.trim()}` : ''}
 
 Generate a complete plain text email including the Subject line at the top.
 Format the output exactly like this:
@@ -303,16 +301,10 @@ export async function POST(request) {
       }, { status: 400 });
     }
 
-    // Validate emailGuidelines (required)
-    if (!emailGuidelines || typeof emailGuidelines !== 'string' || !emailGuidelines.trim()) {
+    // Validate emailGuidelines (optional - if provided, must be valid)
+    if (emailGuidelines !== undefined && emailGuidelines !== null && typeof emailGuidelines !== 'string') {
       return Response.json({
-        error: 'Email Guidelines are required. Please upload a markdown file.'
-      }, { status: 400 });
-    }
-
-    if (!isValidMarkdown(emailGuidelines)) {
-      return Response.json({
-        error: 'Email Guidelines must be valid markdown content.'
+        error: 'Email Guidelines must be a string if provided.'
       }, { status: 400 });
     }
 

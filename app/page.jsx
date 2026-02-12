@@ -477,11 +477,6 @@ export default function Home() {
       return;
     }
 
-    if (!guidelinesContent.trim()) {
-      setTextEmailError('Please upload an Email Guidelines markdown file');
-      return;
-    }
-
     if (!textEmailUserPrompt.trim()) {
       setTextEmailError('Please enter a user prompt describing the email you want to generate');
       return;
@@ -1197,7 +1192,7 @@ export default function Home() {
                 {/* Email Guidelines Upload */}
                 <div>
                   <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
-                    Email Guidelines & Templates <span className="text-red-500">*</span>
+                    Email Guidelines & Templates <span className="text-slate-400 font-normal normal-case">(optional)</span>
                   </label>
                   <div className="relative">
                     <input
