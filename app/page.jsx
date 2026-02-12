@@ -2,12 +2,45 @@
 
 import { useState } from 'react';
 
+const DEFAULT_EMAIL_SYSTEM_PROMPT = `You are an expert email HTML developer. Generate production-ready promotional emails that render perfectly across ALL email clients (Gmail, Outlook, Apple Mail, Yahoo, mobile).
+
+CENTERING RULES (critical):
+- Wrap everything in a <center> tag with width:100% and background color
+- Main email table: use BOTH align="center" attribute AND style="margin: 0 auto;" — never just one
+- Use MSO conditional comments to wrap the main table in a fixed-width 600px table for Outlook
+- Every <td> that contains centered content MUST have text-align: center in its inline style
+- Images: use display: block; margin: 0 auto; on the img tag AND text-align: center on the parent <td>
+- CTA buttons: wrap in a <table> with align="center" attribute
+- Never rely solely on margin: 0 auto for centering — always pair with align="center" or text-align: center
+
+LAYOUT RULES:
+- Table-based layout ONLY — no divs for structure, no flexbox, no grid
+- All styles must be inline (style="...") — do not rely on <style> blocks for critical layout
+- Set explicit widths on tables and cells (width="600" or width="100%")
+- Use max-width: 600px on the main table with width: 100% for fluid behavior
+- All images need: display: block; margin: 0 auto; width: 100%; max-width: [size]px; height: auto;
+- Use role="presentation" on layout tables, cellspacing="0" cellpadding="0" border="0"
+
+GMAIL SAFETY:
+- Gmail strips <style> blocks in non-AMP emails — all critical styles MUST be inline
+- Avoid CSS shorthand in inline styles (use padding-left, padding-right separately if needed)
+- Use simple font stacks: Arial, Helvetica, sans-serif or Georgia, Times New Roman, serif
+
+MOBILE:
+- Add a <style> block with @media queries as progressive enhancement (not required for layout)
+- Use class="email-container" on main table for responsive override
+- Stack columns on mobile with display: block !important
+
+OUTPUT: Return ONLY the raw HTML. No markdown, no code blocks, no explanation.`;
+
 export default function Home() {
   const [activeTab, setActiveTab] = useState('generator');
   const [productUrl, setProductUrl] = useState('');
   const [emailCount, setEmailCount] = useState('2');
   const [promotion, setPromotion] = useState('');
   const [customPromptTab1, setCustomPromptTab1] = useState('');
+  const [tab1SystemPrompt, setTab1SystemPrompt] = useState(DEFAULT_EMAIL_SYSTEM_PROMPT);
+  const [tab1SystemPromptOpen, setTab1SystemPromptOpen] = useState(false);
   const [fetchMethod, setFetchMethod] = useState('standard');
   const [tab1Model, setTab1Model] = useState('claude-opus-4-5');
   const [loading, setLoading] = useState(false);
@@ -116,7 +149,7 @@ export default function Home() {
       const response = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ productUrl, emailCount, promotion, customPrompt: customPromptTab1, fetchMethod, model: tab1Model })
+        body: JSON.stringify({ productUrl, emailCount, promotion, customPrompt: customPromptTab1, systemPrompt: tab1SystemPrompt, fetchMethod, model: tab1Model })
       });
 
       let data;
@@ -670,6 +703,37 @@ export default function Home() {
               rows={3}
               className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-800 focus:border-transparent text-sm transition-all resize-none"
             />
+          </div>
+
+          {/* System Prompt - Collapsible */}
+          <div className="mt-4 border-2 border-slate-200 rounded-xl overflow-hidden">
+            <button
+              onClick={() => setTab1SystemPromptOpen(!tab1SystemPromptOpen)}
+              className="w-full flex items-center justify-between px-4 py-3 bg-slate-50 hover:bg-slate-100 transition-all text-left"
+            >
+              <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+                System Prompt {tab1SystemPrompt !== DEFAULT_EMAIL_SYSTEM_PROMPT && <span className="text-amber-500 normal-case">(modified)</span>}
+              </span>
+              <span className="text-slate-400 text-sm">{tab1SystemPromptOpen ? '▲' : '▼'}</span>
+            </button>
+            {tab1SystemPromptOpen && (
+              <div className="p-4 border-t border-slate-200">
+                <textarea
+                  value={tab1SystemPrompt}
+                  onChange={(e) => setTab1SystemPrompt(e.target.value)}
+                  rows={14}
+                  className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-800 focus:border-transparent text-sm transition-all resize-y font-mono"
+                />
+                {tab1SystemPrompt !== DEFAULT_EMAIL_SYSTEM_PROMPT && (
+                  <button
+                    onClick={() => setTab1SystemPrompt(DEFAULT_EMAIL_SYSTEM_PROMPT)}
+                    className="mt-2 px-4 py-1.5 text-xs font-semibold text-slate-600 border border-slate-300 rounded-lg hover:bg-slate-100 transition-all"
+                  >
+                    Reset to Default
+                  </button>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="mt-5 flex flex-wrap items-center gap-4">

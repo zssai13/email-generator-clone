@@ -499,7 +499,12 @@ export async function POST(request) {
   };
 
   try {
-    const { productUrl, customPrompt, fetchMethod, model } = await request.json();
+    const { productUrl, customPrompt, systemPrompt, fetchMethod, model } = await request.json();
+
+    // Use provided system prompt or fall back to the default
+    const activeSystemPrompt = (systemPrompt && typeof systemPrompt === 'string' && systemPrompt.trim())
+      ? systemPrompt.trim()
+      : EMAIL_SYSTEM_PROMPT;
 
     // Model selection
     const modelMap = {
@@ -549,7 +554,7 @@ export async function POST(request) {
     let response = await client.messages.create({
       model: selectedModel,
       max_tokens: 16000,
-      system: EMAIL_SYSTEM_PROMPT,
+      system: activeSystemPrompt,
       tools,
       messages
     });
@@ -599,7 +604,7 @@ export async function POST(request) {
       response = await client.messages.create({
         model: selectedModel,
         max_tokens: 16000,
-        system: EMAIL_SYSTEM_PROMPT,
+        system: activeSystemPrompt,
         tools,
         messages
       });
