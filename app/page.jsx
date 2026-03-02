@@ -337,7 +337,17 @@ export default function Home() {
         })
       });
 
-      const data = await response.json();
+      let data;
+      const contentType = response.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        const text = await response.text();
+        throw new Error(`Server error (HTTP ${response.status}): ${text.substring(0, 200)}`);
+      }
+      try {
+        data = await response.json();
+      } catch {
+        throw new Error(`Failed to parse response (HTTP ${response.status})`);
+      }
 
       if (!response.ok || data.error) {
         throw new Error(data.error || 'Failed to generate email');

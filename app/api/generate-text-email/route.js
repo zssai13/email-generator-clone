@@ -1,6 +1,9 @@
 import OpenAI from 'openai';
 import Anthropic from '@anthropic-ai/sdk';
 
+// Allow up to 5 minutes for Vercel Pro
+export const maxDuration = 300;
+
 // Initialize Anthropic client lazily
 function getAnthropicClient() {
   const apiKey = process.env.ANTHROPIC_API_KEY;

@@ -2,6 +2,9 @@
 import OpenAI from 'openai';
 import * as cheerio from 'cheerio';
 
+// Allow up to 5 minutes for Vercel Pro (multi-step pipelines need this)
+export const maxDuration = 300;
+
 // Initialize Anthropic client lazily - uses environment variable only
 function getAnthropicClient() {
   const apiKey = process.env.ANTHROPIC_API_KEY;
