@@ -93,7 +93,9 @@ export default function Home() {
     { value: 'claude-sonnet-extract-mini-generate', label: 'Claude Sonnet Extract + Mini Generate', provider: 'claude-hybrid' },
     { value: 'claude-haiku-extract-mini-generate', label: 'Claude Haiku Extract + Mini Generate', provider: 'claude-hybrid' },
     { value: 'manual-extract-mini-refine-generate', label: 'Manual Extract + Mini Refine + Generate (Cheapest)', provider: 'manual-hybrid' },
-    { value: 'manual-extract-opus-refine-generate', label: 'Manual Extract + Opus 4.6 Refine + Generate', provider: 'manual-opus-hybrid' }
+    { value: 'manual-extract-opus-refine-generate', label: 'Manual Extract + Opus 4.6 Refine + Generate', provider: 'manual-opus-hybrid' },
+    { value: 'manual-extract-sonnet-refine-generate', label: 'Manual Extract + Sonnet 4.5 Refine + Generate', provider: 'manual-sonnet-hybrid' },
+    { value: 'manual-extract-haiku-refine-generate', label: 'Manual Extract + Haiku 4.5 Refine + Generate (Cheapest Claude)', provider: 'manual-haiku-hybrid' }
   ];
 
   // Model options for Tab 3 (Text Email Generator)
@@ -320,6 +322,10 @@ export default function Home() {
       setTemplateStatus('Step 1: Manually extracting product data...');
     } else if (selectedModel === 'manual-extract-opus-refine-generate') {
       setTemplateStatus('Step 1: Manually extracting product data → Opus 4.6 refine + generate...');
+    } else if (selectedModel === 'manual-extract-sonnet-refine-generate') {
+      setTemplateStatus('Step 1: Manually extracting product data → Sonnet 4.5 refine + generate...');
+    } else if (selectedModel === 'manual-extract-haiku-refine-generate') {
+      setTemplateStatus('Step 1: Manually extracting product data → Haiku 4.5 refine + generate...');
     } else {
       setTemplateStatus(`Generating with ${selectedModelLabel}...`);
     }

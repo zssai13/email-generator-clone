@@ -167,6 +167,20 @@ function getModelConfig(model) {
       refineModelId: 'claude-opus-4-6',
       generateModelId: 'claude-opus-4-6',
       maxTokens: 16000
+    },
+    'manual-extract-sonnet-refine-generate': {
+      provider: 'manual-sonnet-hybrid',
+      extractMethod: 'manual',
+      refineModelId: 'claude-sonnet-4-5-20250929',
+      generateModelId: 'claude-sonnet-4-5-20250929',
+      maxTokens: 16000
+    },
+    'manual-extract-haiku-refine-generate': {
+      provider: 'manual-haiku-hybrid',
+      extractMethod: 'manual',
+      refineModelId: 'claude-haiku-4-5-20251001',
+      generateModelId: 'claude-haiku-4-5-20251001',
+      maxTokens: 16000
     }
   };
   return configs[model] || configs['claude-opus-4-5'];
@@ -1455,6 +1469,219 @@ Return ONLY the complete HTML starting with <!DOCTYPE html> and ending with </ht
   };
 }
 
+// Claude pricing lookup (per 1M tokens)
+const CLAUDE_PRICING = {
+  'claude-opus-4-6': { input: 5, output: 25 },
+  'claude-opus-4-5-20251101': { input: 15, output: 75 },
+  'claude-sonnet-4-5-20250929': { input: 3, output: 15 },
+  'claude-haiku-4-5-20251001': { input: 1, output: 5 }
+};
+
+function calculateClaudeCost(modelId, inputTokens, outputTokens) {
+  const pricing = CLAUDE_PRICING[modelId] || CLAUDE_PRICING['claude-sonnet-4-5-20250929'];
+  return (inputTokens / 1_000_000) * pricing.input + (outputTokens / 1_000_000) * pricing.output;
+}
+
+// Generic Claude refine function (works for Sonnet, Haiku, etc.)
+async function refineProductDataWithClaude(rawData, productUrl, modelId) {
+  const anthropicClient = getAnthropicClient();
+
+  const imageContext = rawData.images.map((img, index) => {
+    const contextInfo = [];
+    if (img.priority === 1) contextInfo.push('HIGH PRIORITY (hero/main selector)');
+    if (img.isInHero) contextInfo.push('in hero section');
+    if (img.isInProductSection) contextInfo.push('in product section');
+    if (img.isEarlyInPage) contextInfo.push('appears early in page');
+    if (img.width && img.width > 500) contextInfo.push(`large (${img.width}px wide)`);
+    if (img.context) contextInfo.push(`found via: ${img.context}`);
+    return {
+      url: img.url, index, context: contextInfo.join(', ') || 'general image',
+      priority: img.priority, width: img.width
+    };
+  });
+
+  const refinementPrompt = `Review and refine this extracted product data from ${productUrl}:
+
+Product Data:
+- Title: ${rawData.title}
+- Price: ${rawData.price}
+- Description: ${rawData.description.substring(0, 200)}${rawData.description.length > 200 ? '...' : ''}
+
+Images Found (${rawData.images.length} total):
+${imageContext.map(img => `[${img.index}] ${img.url}\n     Context: ${img.context}`).join('\n\n')}
+
+CRITICAL INSTRUCTIONS FOR IMAGE PRIORITIZATION:
+1. The MAIN HERO/PRODUCT IMAGE should be FIRST in the images array
+2. Prioritize images with HIGH PRIORITY, "in hero section", "appears early in page", large width (>500px)
+3. EXCLUDE thumbnails (<300px), logos, icons, non-product images
+4. Keep only the TOP 5 images
+5. Convert any remaining relative URLs to absolute URLs (base: ${productUrl})
+
+Please:
+1. Validate all fields are present and reasonable
+2. Prioritize main product hero image FIRST
+3. Clean price formatting (valid format like "$XX.XX")
+4. Improve description if too short or unclear (keep under 500 chars)
+5. Ensure title is clean and readable
+
+Return ONLY valid JSON:
+{
+  "title": "Product title",
+  "price": "Product price",
+  "description": "Product description",
+  "images": ["main_hero_image_url", "product_image_2", "product_image_3", "product_image_4", "product_image_5"],
+  "url": "${productUrl}"
+}
+
+No markdown, no code blocks, no explanations.`;
+
+  let totalInputTokens = 0;
+  let totalOutputTokens = 0;
+
+  const response = await anthropicClient.messages.create({
+    model: modelId,
+    messages: [{ role: 'user', content: refinementPrompt }],
+    max_tokens: 2000
+  });
+
+  if (response.usage) {
+    totalInputTokens += response.usage.input_tokens || 0;
+    totalOutputTokens += response.usage.output_tokens || 0;
+  }
+
+  let refinedData;
+  try {
+    const rawResponse = response.content
+      .filter(block => block.type === 'text')
+      .map(block => block.text)
+      .join('\n');
+    const jsonMatch = rawResponse.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      refinedData = JSON.parse(jsonMatch[0]);
+    } else {
+      throw new Error('No JSON found in response');
+    }
+  } catch (error) {
+    console.error(`Error parsing ${modelId} refined data:`, error);
+    refinedData = rawData;
+  }
+
+  const cost = calculateClaudeCost(modelId, totalInputTokens, totalOutputTokens);
+
+  console.log(`${modelId} Refinement Complete:`, {
+    tokens_used: totalInputTokens + totalOutputTokens,
+    cost: `$${cost.toFixed(6)}`,
+    images_count: refinedData.images?.length || 0
+  });
+
+  return {
+    productData: refinedData,
+    refinementUsage: {
+      input_tokens: totalInputTokens,
+      output_tokens: totalOutputTokens,
+      total_tokens: totalInputTokens + totalOutputTokens,
+      estimated_cost_usd: cost
+    }
+  };
+}
+
+// Generic Claude email generation function (works for Sonnet, Haiku, etc.)
+async function generateEmailWithClaude(template, productData, customPrompt, modelId) {
+  const anthropicClient = getAnthropicClient();
+
+  const generationPrompt = `Create an ecommerce promotional email using the following email template structure and the provided product data.
+
+Email Template:
+${template}
+
+Product Data:
+${JSON.stringify(productData, null, 2)}
+
+${customPrompt ? `Additional Instructions: ${customPrompt}` : ''}
+
+Return ONLY the complete HTML starting with <!DOCTYPE html> and ending with </html>.
+- Use the product data to fill in the template
+- Replace product titles, prices, images, and descriptions with the extracted data
+- Preserve the template's structure and styling
+- No markdown, no code blocks, no explanations`;
+
+  let totalInputTokens = 0;
+  let totalOutputTokens = 0;
+
+  const response = await anthropicClient.messages.create({
+    model: modelId,
+    messages: [{ role: 'user', content: generationPrompt }],
+    max_tokens: 16000
+  });
+
+  if (response.usage) {
+    totalInputTokens += response.usage.input_tokens || 0;
+    totalOutputTokens += response.usage.output_tokens || 0;
+  }
+
+  const rawResponse = response.content
+    .filter(block => block.type === 'text')
+    .map(block => block.text)
+    .join('\n');
+
+  const cost = calculateClaudeCost(modelId, totalInputTokens, totalOutputTokens);
+
+  console.log(`${modelId} Generation Complete:`, {
+    tokens_used: totalInputTokens + totalOutputTokens,
+    cost: `$${cost.toFixed(6)}`
+  });
+
+  return {
+    content: rawResponse,
+    generationUsage: {
+      input_tokens: totalInputTokens,
+      output_tokens: totalOutputTokens,
+      total_tokens: totalInputTokens + totalOutputTokens,
+      estimated_cost_usd: cost
+    }
+  };
+}
+
+// Generic Manual Extract + Claude Refine + Claude Generate pipeline
+async function generateWithManualExtractClaudeRefineGenerate(productUrl, emailTemplate, customPrompt, modelId) {
+  const modelName = modelId.includes('sonnet') ? 'Sonnet 4.5' : modelId.includes('haiku') ? 'Haiku 4.5' : modelId;
+  console.log(`Starting hybrid approach: Manual extraction + ${modelName} refinement + ${modelName} generation`);
+
+  // Step 1: Manual HTML extraction (free)
+  let rawData;
+  try {
+    rawData = await extractProductDataManual(productUrl);
+  } catch (error) {
+    console.error('Manual extraction failed:', error);
+    throw new Error(`Manual extraction failed: ${error.message}. Please try a different extraction method.`);
+  }
+
+  // Step 2: AI refinement with Claude model
+  const { productData, refinementUsage } = await refineProductDataWithClaude(rawData, productUrl, modelId);
+
+  // Step 3: Generate email with same Claude model
+  const { content, generationUsage } = await generateEmailWithClaude(emailTemplate, productData, customPrompt, modelId);
+
+  const totalUsage = {
+    input_tokens: refinementUsage.input_tokens + generationUsage.input_tokens,
+    output_tokens: refinementUsage.output_tokens + generationUsage.output_tokens,
+    total_tokens: refinementUsage.total_tokens + generationUsage.total_tokens,
+    estimated_cost_usd: refinementUsage.estimated_cost_usd + generationUsage.estimated_cost_usd,
+    breakdown: {
+      refinement: refinementUsage,
+      generation: generationUsage
+    }
+  };
+
+  console.log(`Manual Extract + ${modelName} Refine + Generate Complete:`, {
+    total_cost: `$${totalUsage.estimated_cost_usd.toFixed(6)}`,
+    refinement_cost: `$${refinementUsage.estimated_cost_usd.toFixed(6)}`,
+    generation_cost: `$${generationUsage.estimated_cost_usd.toFixed(6)}`
+  });
+
+  return { content, usage: totalUsage };
+}
+
 // Hybrid approach: GPT-4o extracts, GPT-4o Mini generates
 async function generateWithGPT4oExtractMiniGenerate(productUrl, emailTemplate, customPrompt, tools) {
   console.log('Starting hybrid approach: GPT-4o extraction + GPT-4o Mini generation');
@@ -1682,6 +1909,12 @@ async function generateWithModel(model, prompt, tools, productUrl = null, emailT
       throw new Error('Product URL and email template are required for hybrid approach');
     }
     return await generateWithManualExtractOpusRefineGenerate(productUrl, emailTemplate, customPrompt || '');
+  } else if (modelConfig.provider === 'manual-sonnet-hybrid' || modelConfig.provider === 'manual-haiku-hybrid') {
+    // Hybrid approach: Manual extract + Sonnet/Haiku refine + generate
+    if (!productUrl || !emailTemplate) {
+      throw new Error('Product URL and email template are required for hybrid approach');
+    }
+    return await generateWithManualExtractClaudeRefineGenerate(productUrl, emailTemplate, customPrompt || '', modelConfig.refineModelId);
   } else {
     throw new Error(`Unsupported provider: ${modelConfig.provider}`);
   }
@@ -1715,7 +1948,7 @@ export async function POST(request) {
     const { productUrl, emailTemplate, customPrompt, model } = await request.json();
 
     // Validate model parameter
-    const validModels = ['claude-opus-4-6', 'claude-opus-4-5', 'claude-sonnet-4-5', 'gpt-4o', 'gpt-4o-mini', 'gpt-4o-extract-mini-generate', 'claude-sonnet-extract-mini-generate', 'claude-haiku-extract-mini-generate', 'manual-extract-mini-refine-generate', 'manual-extract-opus-refine-generate'];
+    const validModels = ['claude-opus-4-6', 'claude-opus-4-5', 'claude-sonnet-4-5', 'gpt-4o', 'gpt-4o-mini', 'gpt-4o-extract-mini-generate', 'claude-sonnet-extract-mini-generate', 'claude-haiku-extract-mini-generate', 'manual-extract-mini-refine-generate', 'manual-extract-opus-refine-generate', 'manual-extract-sonnet-refine-generate', 'manual-extract-haiku-refine-generate'];
     const selectedModel = model || 'claude-opus-4-5'; // Default to Claude Opus for backward compatibility
     
     if (!validModels.includes(selectedModel)) {
@@ -1776,7 +2009,7 @@ export async function POST(request) {
     }
 
     // Check Anthropic key - environment variable only
-    if (modelConfig.provider === 'anthropic' || modelConfig.provider === 'claude-hybrid' || modelConfig.provider === 'manual-opus-hybrid') {
+    if (modelConfig.provider === 'anthropic' || modelConfig.provider === 'claude-hybrid' || modelConfig.provider === 'manual-opus-hybrid' || modelConfig.provider === 'manual-sonnet-hybrid' || modelConfig.provider === 'manual-haiku-hybrid') {
       if (!process.env.ANTHROPIC_API_KEY) {
         return Response.json({ 
           error: 'Anthropic API key is required but not configured. Please add ANTHROPIC_API_KEY to your environment variables or .env.local file.' 
@@ -1799,7 +2032,7 @@ export async function POST(request) {
 
     // Generate with selected model
     // For hybrid approach, pass additional params; for others, just prompt and tools
-    const isHybridModel = selectedModel === 'gpt-4o-extract-mini-generate' || selectedModel === 'claude-sonnet-extract-mini-generate' || selectedModel === 'claude-haiku-extract-mini-generate' || selectedModel === 'manual-extract-mini-refine-generate' || selectedModel === 'manual-extract-opus-refine-generate';
+    const isHybridModel = selectedModel === 'gpt-4o-extract-mini-generate' || selectedModel === 'claude-sonnet-extract-mini-generate' || selectedModel === 'claude-haiku-extract-mini-generate' || selectedModel === 'manual-extract-mini-refine-generate' || selectedModel === 'manual-extract-opus-refine-generate' || selectedModel === 'manual-extract-sonnet-refine-generate' || selectedModel === 'manual-extract-haiku-refine-generate';
     const result = isHybridModel
       ? await generateWithModel(selectedModel, prompt, tools, productUrl, emailTemplate, customPrompt)
       : await generateWithModel(selectedModel, prompt, tools);
