@@ -642,55 +642,182 @@ async function extractProductDataManual(productUrl) {
     
     const html = await response.text();
     const $ = cheerio.load(html);
-    
-    // Extract title - try multiple selectors
+
+    // === Parse JSON-LD structured data (rich product info from schema.org) ===
+    let jsonLdData = null;
+    $('script[type="application/ld+json"]').each((i, el) => {
+      try {
+        const parsed = JSON.parse($(el).html());
+        // Handle both single objects and arrays
+        const items = Array.isArray(parsed) ? parsed : [parsed];
+        for (const item of items) {
+          if (item['@type'] === 'Product' || item['@type'] === 'product') {
+            jsonLdData = item;
+            break;
+          }
+          // Check @graph arrays (common in Shopify)
+          if (item['@graph']) {
+            for (const graphItem of item['@graph']) {
+              if (graphItem['@type'] === 'Product' || graphItem['@type'] === 'product') {
+                jsonLdData = graphItem;
+                break;
+              }
+            }
+          }
+        }
+      } catch (e) { /* ignore malformed JSON-LD */ }
+    });
+
+    // === Extract title ===
     let title = '';
-    const titleSelectors = [
-      'h1.product-title',
-      'h1[data-product-title]',
-      '.product-title h1',
-      'h1',
-      'meta[property="og:title"]',
-      'meta[name="twitter:title"]',
-      'title'
-    ];
-    
-    for (const selector of titleSelectors) {
-      if (selector.startsWith('meta')) {
-        title = $(selector).attr('content') || $(selector).attr('property') || '';
-      } else {
-        title = $(selector).first().text().trim();
-      }
-      if (title) break;
+    // Try JSON-LD first (most reliable for product pages)
+    if (jsonLdData?.name) {
+      title = jsonLdData.name;
     }
-    
-    // Extract price - try multiple selectors
+    if (!title) {
+      const titleSelectors = [
+        'h1.product-title',
+        'h1[data-product-title]',
+        '.product-title h1',
+        'h1',
+        'meta[property="og:title"]',
+        'meta[name="twitter:title"]',
+        'title'
+      ];
+
+      for (const selector of titleSelectors) {
+        if (selector.startsWith('meta')) {
+          title = $(selector).attr('content') || '';
+        } else {
+          title = $(selector).first().text().trim();
+        }
+        if (title) break;
+      }
+    }
+
+    // === Extract price ===
     let price = '';
-    const priceSelectors = [
-      '.price',
-      '.product-price',
-      '[data-price]',
-      '.price-current',
-      '.sale-price',
-      '[itemprop="price"]',
-      '.cost',
-      '.amount'
-    ];
-    
-    for (const selector of priceSelectors) {
-      price = $(selector).first().text().trim() || $(selector).attr('data-price') || '';
-      if (price) {
-        // Clean price (remove currency symbols, keep numbers and decimal)
-        price = price.replace(/[^\d.,]/g, '').trim();
-        break;
+    // Try JSON-LD first (structured, reliable)
+    if (jsonLdData?.offers) {
+      const offers = Array.isArray(jsonLdData.offers) ? jsonLdData.offers : [jsonLdData.offers];
+      for (const offer of offers) {
+        if (offer.price) {
+          const currency = offer.priceCurrency || '';
+          price = currency ? `${currency} ${offer.price}` : String(offer.price);
+          break;
+        }
+        if (offer.lowPrice) {
+          const currency = offer.priceCurrency || '';
+          price = currency ? `${currency} ${offer.lowPrice}` : String(offer.lowPrice);
+          break;
+        }
       }
     }
-    
-    // Extract images with context - prioritize hero/main images
+    // Try Shopify global product JSON (window.ShopifyAnalytics, etc.)
+    if (!price) {
+      const priceMatch = html.match(/"price":\s*(\d+)/);
+      if (priceMatch) {
+        // Shopify stores price in cents
+        const cents = parseInt(priceMatch[1]);
+        if (cents > 100) {
+          price = (cents / 100).toFixed(2);
+        } else {
+          price = String(cents);
+        }
+      }
+    }
+    // Try CSS selectors
+    if (!price) {
+      const priceSelectors = [
+        '.price',
+        '.product-price',
+        '[data-price]',
+        '.price-current',
+        '.sale-price',
+        '[itemprop="price"]',
+        '.cost',
+        '.amount'
+      ];
+
+      for (const selector of priceSelectors) {
+        const text = $(selector).first().text().trim();
+        const dataPrice = $(selector).attr('data-price') || '';
+        const found = text || dataPrice;
+        if (found) {
+          // Extract price pattern (handles £24.99, $29.99, 24.99, etc.)
+          const pricePattern = found.match(/([£$€]?\s?\d+[.,]\d{2})/);
+          if (pricePattern) {
+            price = pricePattern[1].trim();
+          } else {
+            price = found.replace(/[^\d.,£$€]/g, '').trim();
+          }
+          if (price) break;
+        }
+      }
+    }
+    // Try og:price meta tags
+    if (!price) {
+      price = $('meta[property="product:price:amount"]').attr('content') ||
+              $('meta[property="og:price:amount"]').attr('content') || '';
+    }
+
+    // === Extract images with context - prioritize hero/main images ===
     const imagesWithContext = [];
     const seenUrls = new Set();
-    
-    // Priority 1: Hero/Main product image selectors (highest priority)
+
+    // Helper to normalize URLs for deduplication
+    const normalizeUrl = (url) => {
+      if (!url) return '';
+      let normalized = url.trim();
+      if (normalized.startsWith('//')) normalized = `https:${normalized}`;
+      // Remove query params for dedup (same image, different sizes)
+      try { return new URL(normalized).origin + new URL(normalized).pathname; } catch { return normalized; }
+    };
+
+    // Priority 0: og:image meta tag (most reliable - platforms always set this to main product image)
+    const ogImage = $('meta[property="og:image"]').attr('content') || '';
+    if (ogImage) {
+      let ogUrl = ogImage.trim();
+      if (ogUrl.startsWith('//')) ogUrl = `https:${ogUrl}`;
+      seenUrls.add(normalizeUrl(ogUrl));
+      imagesWithContext.push({
+        url: ogUrl,
+        priority: 0,
+        context: 'og:image (main product image)',
+        width: null,
+        height: null,
+        isInHero: true,
+        isInProductSection: true,
+        isEarlyInPage: true,
+        position: 0
+      });
+    }
+
+    // Priority 0: JSON-LD product image (structured data)
+    if (jsonLdData?.image) {
+      const ldImages = Array.isArray(jsonLdData.image) ? jsonLdData.image : [jsonLdData.image];
+      for (const ldImg of ldImages) {
+        const imgUrl = typeof ldImg === 'string' ? ldImg : ldImg?.url || ldImg?.contentUrl || '';
+        if (imgUrl && !seenUrls.has(normalizeUrl(imgUrl))) {
+          let absUrl = imgUrl.trim();
+          if (absUrl.startsWith('//')) absUrl = `https:${absUrl}`;
+          seenUrls.add(normalizeUrl(absUrl));
+          imagesWithContext.push({
+            url: absUrl,
+            priority: 0,
+            context: 'json-ld product image',
+            width: null,
+            height: null,
+            isInHero: true,
+            isInProductSection: true,
+            isEarlyInPage: true,
+            position: 0
+          });
+        }
+      }
+    }
+
+    // Priority 1: Hero/Main product image selectors (highest CSS priority)
     const heroImageSelectors = [
       { selector: '.hero img', priority: 1, context: 'hero-section' },
       { selector: '.product-hero img', priority: 1, context: 'product-hero' },
@@ -699,9 +826,17 @@ async function extractProductDataManual(productUrl) {
       { selector: 'img[data-product-image="main"]', priority: 1, context: 'main-product-image' },
       { selector: '.product__media img:first-child', priority: 1, context: 'shopify-main' },
       { selector: '.product-single__media img:first-child', priority: 1, context: 'shopify-main' },
-      { selector: '.woocommerce-product-gallery img:first-child', priority: 1, context: 'woocommerce-main' }
+      { selector: '.woocommerce-product-gallery img:first-child', priority: 1, context: 'woocommerce-main' },
+      // Shopify CDN product images (high confidence these are actual product photos)
+      { selector: 'img[src*="cdn.shopify.com/s/files"]', priority: 1, context: 'shopify-cdn' },
+      { selector: 'img[src*="/cdn/shop/files"]', priority: 1, context: 'shopify-cdn-relative' },
+      { selector: 'img[data-src*="cdn.shopify.com/s/files"]', priority: 1, context: 'shopify-cdn-lazy' },
+      { selector: 'img[data-src*="/cdn/shop/files"]', priority: 1, context: 'shopify-cdn-lazy-relative' },
+      // srcset-based Shopify images
+      { selector: 'img[srcset*="cdn.shopify.com"]', priority: 1, context: 'shopify-srcset' },
+      { selector: 'img[srcset*="/cdn/shop/"]', priority: 1, context: 'shopify-srcset-relative' }
     ];
-    
+
     // Priority 2: Product image selectors
     const productImageSelectors = [
       { selector: 'img.product-image', priority: 2, context: 'product-image-class' },
@@ -715,41 +850,78 @@ async function extractProductDataManual(productUrl) {
       { selector: '.product__media img', priority: 2, context: 'shopify-media' },
       { selector: '.product-single__media img', priority: 2, context: 'shopify-single' }
     ];
-    
+
     // Priority 3: General images (fallback)
     const generalImageSelectors = [
       { selector: 'img', priority: 3, context: 'general' }
     ];
-    
+
+    // Known non-product image domains to filter out
+    const nonProductDomains = [
+      'markethero-cdn', 'google-analytics', 'facebook.com', 'doubleclick',
+      'googletagmanager', 'pixel', 'tracking', 'analytics', 'beacon',
+      'fonts.googleapis', 'gravatar', 'wp-content/plugins'
+    ];
+
     // Extract images with priority and context
     const allSelectors = [...heroImageSelectors, ...productImageSelectors];
-    
+
     for (const { selector, priority, context } of allSelectors) {
       $(selector).each((i, el) => {
         const $el = $(el);
-        const src = $el.attr('src') || $el.attr('data-src') || $el.attr('data-lazy-src') || $el.attr('data-original') || '';
-        
-        if (!src || seenUrls.has(src)) return;
-        
-        // Filter out logos, icons, thumbnails
+        // Try src, data-src, srcset (extract first URL from srcset)
+        let src = $el.attr('src') || $el.attr('data-src') || $el.attr('data-lazy-src') || $el.attr('data-original') || '';
+
+        // If no src found, try extracting from srcset (first entry)
+        if (!src) {
+          const srcset = $el.attr('srcset') || '';
+          if (srcset) {
+            src = srcset.split(',')[0].trim().split(/\s+/)[0];
+          }
+        }
+
+        if (!src) return;
+        const normalizedSrc = normalizeUrl(src);
+        if (seenUrls.has(normalizedSrc)) return;
+
+        // Filter out logos, icons, thumbnails, payment badges
         const srcLower = src.toLowerCase();
         const altLower = ($el.attr('alt') || '').toLowerCase();
         const classLower = ($el.attr('class') || '').toLowerCase();
-        
-        if (srcLower.includes('logo') || srcLower.includes('icon') || 
+
+        if (srcLower.includes('logo') || srcLower.includes('icon') ||
             altLower.includes('logo') || classLower.includes('logo') ||
             srcLower.includes('avatar') || srcLower.includes('thumbnail') ||
-            srcLower.includes('badge') || srcLower.includes('flag')) {
+            srcLower.includes('badge') || srcLower.includes('flag') ||
+            srcLower.includes('payment') || srcLower.includes('trust-seal') ||
+            srcLower.endsWith('.svg') || srcLower.includes('spinner') ||
+            srcLower.includes('placeholder')) {
           return;
         }
-        
+
+        // Filter out known non-product tracking/analytics domains
+        if (nonProductDomains.some(domain => srcLower.includes(domain))) {
+          return;
+        }
+
         // Get image dimensions from HTML attributes
         const width = parseInt($el.attr('width') || $el.attr('data-width') || '0');
         const height = parseInt($el.attr('height') || $el.attr('data-height') || '0');
-        
+
+        // Filter out tiny images (likely icons/decorations) - skip if under 50px in either dimension
+        if ((width > 0 && width < 50) || (height > 0 && height < 50)) {
+          return;
+        }
+
         // Check if image is in hero section
         const isInHero = $el.closest('.hero, .product-hero, .banner, .hero-section').length > 0;
         const isInProductSection = $el.closest('.product, .product-details, .product-info, [data-product]').length > 0;
+
+        // Boost priority for Shopify CDN product images (if found via general selector)
+        let effectivePriority = priority;
+        if (srcLower.includes('cdn.shopify.com/s/files') || srcLower.includes('/cdn/shop/files')) {
+          effectivePriority = Math.min(priority, 1); // Promote to priority 1
+        }
         
         // Calculate position (earlier = better for hero images)
         const htmlPosition = html.indexOf(src);
@@ -757,7 +929,7 @@ async function extractProductDataManual(productUrl) {
         
         imagesWithContext.push({
           url: src,
-          priority: priority,
+          priority: effectivePriority,
           context: context,
           width: width || null,
           height: height || null,
@@ -766,26 +938,41 @@ async function extractProductDataManual(productUrl) {
           isEarlyInPage: isEarlyInPage,
           position: htmlPosition
         });
-        
-        seenUrls.add(src);
+
+        seenUrls.add(normalizedSrc);
       });
     }
-    
+
     // If no images found with selectors, try general fallback
     if (imagesWithContext.length === 0) {
       $(generalImageSelectors[0].selector).each((i, el) => {
         const $el = $(el);
-        const src = $el.attr('src') || $el.attr('data-src') || '';
-        
-        if (!src || seenUrls.has(src) || !src.startsWith('http')) return;
-        
+        let src = $el.attr('src') || $el.attr('data-src') || '';
+
+        if (!src) return;
+        const normalizedSrc = normalizeUrl(src);
+        // Accept protocol-relative URLs (//domain.com/...) and absolute URLs
+        if (!src.startsWith('http') && !src.startsWith('//')) return;
+        if (seenUrls.has(normalizedSrc)) return;
+
         const srcLower = src.toLowerCase();
-        if (srcLower.includes('logo') || srcLower.includes('icon')) return;
-        
+        if (srcLower.includes('logo') || srcLower.includes('icon') ||
+            srcLower.endsWith('.svg') || srcLower.includes('payment') ||
+            srcLower.includes('badge') || srcLower.includes('spinner')) return;
+
+        // Filter out known non-product domains
+        if (nonProductDomains.some(domain => srcLower.includes(domain))) return;
+
+        // Boost Shopify CDN images even in fallback
+        let fallbackPriority = 3;
+        if (srcLower.includes('cdn.shopify.com/s/files') || srcLower.includes('/cdn/shop/files')) {
+          fallbackPriority = 1;
+        }
+
         imagesWithContext.push({
           url: src,
-          priority: 3,
-          context: 'general-fallback',
+          priority: fallbackPriority,
+          context: fallbackPriority === 1 ? 'shopify-cdn-fallback' : 'general-fallback',
           width: null,
           height: null,
           isInHero: false,
@@ -793,8 +980,8 @@ async function extractProductDataManual(productUrl) {
           isEarlyInPage: false,
           position: html.indexOf(src)
         });
-        
-        seenUrls.add(src);
+
+        seenUrls.add(normalizedSrc);
       });
     }
     
@@ -807,26 +994,31 @@ async function extractProductDataManual(productUrl) {
     // Limit to top 15 images (will be refined by AI)
     const limitedImagesWithContext = imagesWithContext.slice(0, 15);
     
-    // Extract description - try multiple selectors
+    // Extract description - try JSON-LD first, then multiple selectors
     let description = '';
-    const descSelectors = [
-      '.product-description',
-      '.description',
-      '[data-product-description]',
-      '.product-details',
-      '.product-info',
-      'meta[property="og:description"]',
-      'meta[name="description"]',
-      '[itemprop="description"]'
-    ];
-    
-    for (const selector of descSelectors) {
-      if (selector.startsWith('meta')) {
-        description = $(selector).attr('content') || '';
-      } else {
-        description = $(selector).first().text().trim();
+    if (jsonLdData?.description && jsonLdData.description.length > 20) {
+      description = jsonLdData.description;
+    }
+    if (!description || description.length <= 20) {
+      const descSelectors = [
+        '.product-description',
+        '.description',
+        '[data-product-description]',
+        '.product-details',
+        '.product-info',
+        'meta[property="og:description"]',
+        'meta[name="description"]',
+        '[itemprop="description"]'
+      ];
+
+      for (const selector of descSelectors) {
+        if (selector.startsWith('meta')) {
+          description = $(selector).attr('content') || '';
+        } else {
+          description = $(selector).first().text().trim();
+        }
+        if (description && description.length > 20) break;
       }
-      if (description && description.length > 20) break;
     }
     
     // Truncate description if too long
@@ -872,7 +1064,10 @@ async function extractProductDataManual(productUrl) {
       title: rawData.title,
       price: rawData.price,
       images_count: rawData.images.length,
-      hero_images: rawData.images.filter(img => img.priority === 1 || img.isInHero).length,
+      og_jsonld_images: rawData.images.filter(img => img.priority === 0).length,
+      hero_images: rawData.images.filter(img => img.priority <= 1 || img.isInHero).length,
+      shopify_cdn_images: rawData.images.filter(img => img.context?.includes('shopify')).length,
+      json_ld_found: !!jsonLdData,
       description_length: rawData.description.length
     });
     
@@ -891,7 +1086,8 @@ async function refineProductDataWithMini(rawData, productUrl) {
   // Prepare image context for AI
   const imageContext = rawData.images.map((img, index) => {
     const contextInfo = [];
-    if (img.priority === 1) contextInfo.push('HIGH PRIORITY (hero/main selector)');
+    if (img.priority === 0) contextInfo.push('HIGHEST PRIORITY (og:image or JSON-LD - confirmed main product image)');
+    else if (img.priority === 1) contextInfo.push('HIGH PRIORITY (hero/main/Shopify-CDN selector)');
     if (img.isInHero) contextInfo.push('in hero section');
     if (img.isInProductSection) contextInfo.push('in product section');
     if (img.isEarlyInPage) contextInfo.push('appears early in page');
@@ -920,10 +1116,12 @@ ${imageContext.map(img => `[${img.index}] ${img.url}\n     Context: ${img.contex
 CRITICAL INSTRUCTIONS FOR IMAGE PRIORITIZATION:
 1. The MAIN HERO/PRODUCT IMAGE should be FIRST in the images array
 2. Prioritize images with:
-   - HIGH PRIORITY (priority 1) - these were found using hero/main selectors
+   - HIGHEST PRIORITY (priority 0) - these are from og:image or JSON-LD structured data, ALWAYS use these first as they are the confirmed main product image
+   - HIGH PRIORITY (priority 1) - these were found using hero/main/Shopify-CDN selectors
    - "in hero section" - these are in the hero area
    - "appears early in page" - main images appear before description
    - Large width (>500px) - main product images are typically large
+   - Images from cdn.shopify.com or /cdn/shop/ paths are actual product photos
    - Context containing "hero", "main", "primary", "shopify-main", "woocommerce-main"
 3. EXCLUDE images that are:
    - Thumbnails (small width, <300px)
@@ -1003,7 +1201,8 @@ async function refineProductDataWithOpus(rawData, productUrl) {
   // Prepare image context for AI
   const imageContext = rawData.images.map((img, index) => {
     const contextInfo = [];
-    if (img.priority === 1) contextInfo.push('HIGH PRIORITY (hero/main selector)');
+    if (img.priority === 0) contextInfo.push('HIGHEST PRIORITY (og:image or JSON-LD - confirmed main product image)');
+    else if (img.priority === 1) contextInfo.push('HIGH PRIORITY (hero/main/Shopify-CDN selector)');
     if (img.isInHero) contextInfo.push('in hero section');
     if (img.isInProductSection) contextInfo.push('in product section');
     if (img.isEarlyInPage) contextInfo.push('appears early in page');
@@ -1032,10 +1231,12 @@ ${imageContext.map(img => `[${img.index}] ${img.url}\n     Context: ${img.contex
 CRITICAL INSTRUCTIONS FOR IMAGE PRIORITIZATION:
 1. The MAIN HERO/PRODUCT IMAGE should be FIRST in the images array
 2. Prioritize images with:
-   - HIGH PRIORITY (priority 1) - these were found using hero/main selectors
+   - HIGHEST PRIORITY (priority 0) - these are from og:image or JSON-LD structured data, ALWAYS use these first as they are the confirmed main product image
+   - HIGH PRIORITY (priority 1) - these were found using hero/main/Shopify-CDN selectors
    - "in hero section" - these are in the hero area
    - "appears early in page" - main images appear before description
    - Large width (>500px) - main product images are typically large
+   - Images from cdn.shopify.com or /cdn/shop/ paths are actual product photos
    - Context containing "hero", "main", "primary", "shopify-main", "woocommerce-main"
 3. EXCLUDE images that are:
    - Thumbnails (small width, <300px)
@@ -1488,7 +1689,8 @@ async function refineProductDataWithClaude(rawData, productUrl, modelId) {
 
   const imageContext = rawData.images.map((img, index) => {
     const contextInfo = [];
-    if (img.priority === 1) contextInfo.push('HIGH PRIORITY (hero/main selector)');
+    if (img.priority === 0) contextInfo.push('HIGHEST PRIORITY (og:image or JSON-LD - confirmed main product image)');
+    else if (img.priority === 1) contextInfo.push('HIGH PRIORITY (hero/main/Shopify-CDN selector)');
     if (img.isInHero) contextInfo.push('in hero section');
     if (img.isInProductSection) contextInfo.push('in product section');
     if (img.isEarlyInPage) contextInfo.push('appears early in page');
