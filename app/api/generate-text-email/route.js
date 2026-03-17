@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
 import Anthropic from '@anthropic-ai/sdk';
+import * as cheerio from 'cheerio';
 
 // Allow up to 5 minutes for Vercel Pro
 export const maxDuration = 300;
@@ -40,6 +41,16 @@ function getXAIClient() {
   });
 }
 
+// URL validation helper
+function isValidUrl(string) {
+  try {
+    const url = new URL(string);
+    return url.protocol === 'http:' || url.protocol === 'https:';
+  } catch (_) {
+    return false;
+  }
+}
+
 // Model configuration
 function getModelConfig(model) {
   const configs = {
@@ -72,7 +83,7 @@ function getModelConfig(model) {
 }
 
 // Build the input prompt from all components
-function buildTextEmailInput(businessInfo, guidelines, systemPrompt, userPrompt) {
+function buildTextEmailInput(businessInfo, guidelines, systemPrompt, userPrompt, pageContext) {
   let input = '';
 
   // Add system prompt if provided
@@ -82,6 +93,11 @@ function buildTextEmailInput(businessInfo, guidelines, systemPrompt, userPrompt)
 
   // Add business context
   input += `## Business Context (RAG Data)\n${businessInfo.trim()}\n\n`;
+
+  // Add page context (if URL was extracted)
+  if (pageContext && pageContext.trim()) {
+    input += `## Page Context (Extracted from URL)\n${pageContext.trim()}\n\n`;
+  }
 
   // Add email guidelines (if provided)
   if (guidelines && guidelines.trim()) {
@@ -104,11 +120,12 @@ The email should be ready to copy and paste directly into an email client.`;
 }
 
 // Build messages for Chat Completions API (used by xAI/Grok)
-function buildChatMessages(businessInfo, guidelines, systemPrompt, userPrompt) {
+function buildChatMessages(businessInfo, guidelines, systemPrompt, userPrompt, pageContext) {
   const systemContent = `You are an expert email copywriter. Your task is to generate high-quality, personalized emails.
 
 ${systemPrompt ? `## Additional Instructions\n${systemPrompt.trim()}\n\n` : ''}## Business Context (RAG Data)
 ${businessInfo.trim()}
+${pageContext?.trim() ? `\n## Page Context (Extracted from URL)\n${pageContext.trim()}` : ''}
 ${guidelines?.trim() ? `\n## Email Guidelines & Templates\n${guidelines.trim()}` : ''}
 
 Generate a complete plain text email including the Subject line at the top.
@@ -143,6 +160,176 @@ function calculateCost(modelId, usage) {
   const outputCost = (outputTokens / 1000) * modelPricing.output;
 
   return inputCost + outputCost;
+}
+
+// Extract full visible text from a web page using Cheerio (free)
+async function extractPageText(pageUrl) {
+  try {
+    const response = await fetch(pageUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status} ${response.statusText}`);
+    }
+
+    const html = await response.text();
+    const $ = cheerio.load(html);
+
+    // Extract structured metadata
+    const metadata = {};
+    metadata.title = $('meta[property="og:title"]').attr('content')
+      || $('title').text().trim()
+      || $('h1').first().text().trim()
+      || '';
+    metadata.description = $('meta[property="og:description"]').attr('content')
+      || $('meta[name="description"]').attr('content')
+      || '';
+    metadata.siteName = $('meta[property="og:site_name"]').attr('content') || '';
+    metadata.type = $('meta[property="og:type"]').attr('content') || '';
+
+    // Extract JSON-LD structured data (all types, not just Product)
+    const jsonLdEntries = [];
+    $('script[type="application/ld+json"]').each((i, el) => {
+      try {
+        const parsed = JSON.parse($(el).html());
+        const items = Array.isArray(parsed) ? parsed : [parsed];
+        for (const item of items) {
+          const entry = { type: item['@type'] || 'unknown' };
+          if (item.name) entry.name = item.name;
+          if (item.description) entry.description = item.description;
+          if (item.offers) {
+            const offers = Array.isArray(item.offers) ? item.offers : [item.offers];
+            entry.price = offers[0]?.price;
+            entry.priceCurrency = offers[0]?.priceCurrency;
+          }
+          if (item.author) entry.author = typeof item.author === 'string' ? item.author : item.author?.name;
+          if (item.datePublished) entry.datePublished = item.datePublished;
+          jsonLdEntries.push(entry);
+
+          if (item['@graph']) {
+            for (const graphItem of item['@graph']) {
+              const gEntry = { type: graphItem['@type'] || 'unknown' };
+              if (graphItem.name) gEntry.name = graphItem.name;
+              if (graphItem.description) gEntry.description = graphItem.description;
+              jsonLdEntries.push(gEntry);
+            }
+          }
+        }
+      } catch (e) { /* ignore malformed JSON-LD */ }
+    });
+
+    // Remove non-content elements to get clean visible text
+    $('script, style, noscript, svg, iframe').remove();
+
+    // Prefer main content areas over full body
+    let bodyText = '';
+    const mainContentSelectors = ['main', 'article', '[role="main"]', '.content', '.main-content', '#content', '#main'];
+    for (const selector of mainContentSelectors) {
+      const el = $(selector);
+      if (el.length && el.text().trim().length > 200) {
+        bodyText = el.text();
+        break;
+      }
+    }
+    if (!bodyText) {
+      bodyText = $('body').text();
+    }
+
+    // Clean up whitespace
+    bodyText = bodyText
+      .replace(/[\t ]+/g, ' ')
+      .replace(/\n\s*\n/g, '\n')
+      .replace(/\n /g, '\n')
+      .trim();
+
+    // Truncate if extremely long
+    const MAX_TEXT_LENGTH = 8000;
+    if (bodyText.length > MAX_TEXT_LENGTH) {
+      bodyText = bodyText.substring(0, MAX_TEXT_LENGTH) + `\n\n[Text truncated - original length: ${bodyText.length} characters]`;
+    }
+
+    console.log('Page Text Extraction Complete:', {
+      url: pageUrl,
+      title: metadata.title?.substring(0, 60),
+      bodyTextLength: bodyText.length,
+      jsonLdEntries: jsonLdEntries.length,
+      hasDescription: !!metadata.description
+    });
+
+    return {
+      url: pageUrl,
+      metadata,
+      jsonLd: jsonLdEntries.length > 0 ? jsonLdEntries : null,
+      bodyText
+    };
+
+  } catch (error) {
+    console.error('Page text extraction error:', error);
+    throw new Error(`Page extraction failed: ${error.message}`);
+  }
+}
+
+// Refine raw page extraction into clean markdown summary using GPT-4o Mini
+async function refinePageTextWithMini(rawExtraction) {
+  const openaiClient = getOpenAIClient();
+
+  const refinementPrompt = `You are a text extraction assistant. Below is raw content extracted from a web page. Your job is to organize this into a clean, readable summary that would be useful context for writing a personalized email.
+
+URL: ${rawExtraction.url}
+Page Title: ${rawExtraction.metadata.title || 'Unknown'}
+Page Description: ${rawExtraction.metadata.description || 'None'}
+Site: ${rawExtraction.metadata.siteName || 'Unknown'}
+${rawExtraction.jsonLd ? `\nStructured Data:\n${JSON.stringify(rawExtraction.jsonLd, null, 2)}` : ''}
+
+--- RAW PAGE TEXT ---
+${rawExtraction.bodyText}
+--- END RAW TEXT ---
+
+Please produce a clean, well-organized summary of this page's content. Include:
+1. What the page/company/product is about
+2. Key offerings, features, or value propositions mentioned
+3. Any pricing, plans, or specific details
+4. Notable claims, testimonials, or social proof
+5. Contact info or CTAs if present
+
+Keep the summary concise but comprehensive (aim for 500-1500 words). Use markdown formatting with headers and bullet points. Do NOT fabricate information not present on the page.`;
+
+  const response = await openaiClient.chat.completions.create({
+    model: 'gpt-4o-mini',
+    messages: [{ role: 'user', content: refinementPrompt }],
+    max_tokens: 2000
+  });
+
+  const inputTokens = response.usage?.prompt_tokens || 0;
+  const outputTokens = response.usage?.completion_tokens || 0;
+
+  // GPT-4o Mini pricing: $0.15/1M input, $0.60/1M output
+  const MINI_INPUT = 0.00015 / 1000;
+  const MINI_OUTPUT = 0.0006 / 1000;
+  const cost = (inputTokens * MINI_INPUT) + (outputTokens * MINI_OUTPUT);
+
+  const refinedText = response.choices[0]?.message?.content || rawExtraction.bodyText;
+
+  console.log('Page Text Refinement Complete:', {
+    input_tokens: inputTokens,
+    output_tokens: outputTokens,
+    cost: `$${cost.toFixed(6)}`,
+    refined_length: refinedText.length
+  });
+
+  return {
+    refinedText,
+    extractionUsage: {
+      input_tokens: inputTokens,
+      output_tokens: outputTokens,
+      total_tokens: inputTokens + outputTokens,
+      estimated_cost_usd: cost
+    }
+  };
 }
 
 // Generate text email using OpenAI Responses API (GPT-5.2)
@@ -215,7 +402,7 @@ async function generateWithChatAPI(client, config, messages) {
 }
 
 // Generate text email using Anthropic Messages API (Claude Opus 4.6)
-async function generateWithAnthropicAPI(config, businessInfo, guidelines, systemPrompt, userPrompt) {
+async function generateWithAnthropicAPI(config, businessInfo, guidelines, systemPrompt, userPrompt, pageContext) {
   const anthropicClient = getAnthropicClient();
   const startTime = Date.now();
 
@@ -224,6 +411,7 @@ async function generateWithAnthropicAPI(config, businessInfo, guidelines, system
 
 ${systemPrompt ? `## Additional Instructions\n${systemPrompt.trim()}\n\n` : ''}## Business Context (RAG Data)
 ${businessInfo.trim()}
+${pageContext?.trim() ? `\n## Page Context (Extracted from URL)\n${pageContext.trim()}` : ''}
 ${guidelines?.trim() ? `\n## Email Guidelines & Templates\n${guidelines.trim()}` : ''}
 
 Generate a complete plain text email including the Subject line at the top.
@@ -279,7 +467,7 @@ function isValidMarkdown(content) {
 
 export async function POST(request) {
   try {
-    const { businessInfo, emailGuidelines, systemPrompt, userPrompt, model } = await request.json();
+    const { businessInfo, emailGuidelines, systemPrompt, userPrompt, model, pageUrl } = await request.json();
 
     // Validate model
     const validModels = ['gpt-5.2', 'gpt-5.2-pro', 'grok-4-1-fast', 'claude-opus-4-6'];
@@ -325,6 +513,15 @@ export async function POST(request) {
       }, { status: 400 });
     }
 
+    // Validate pageUrl (optional)
+    if (pageUrl && typeof pageUrl === 'string' && pageUrl.trim()) {
+      if (!isValidUrl(pageUrl.trim())) {
+        return Response.json({
+          error: 'Invalid URL format. Please enter a valid http:// or https:// URL.'
+        }, { status: 400 });
+      }
+    }
+
     // Get model config
     const modelConfig = getModelConfig(selectedModel);
 
@@ -347,26 +544,51 @@ export async function POST(request) {
       }, { status: 500 });
     }
 
+    // Optional: Extract page context from URL
+    let pageContext = '';
+    let extractionUsage = null;
+
+    if (pageUrl && typeof pageUrl === 'string' && pageUrl.trim()) {
+      try {
+        console.log('Extracting page text from:', pageUrl.trim());
+        const rawExtraction = await extractPageText(pageUrl.trim());
+
+        // Refine with GPT-4o Mini
+        const { refinedText, extractionUsage: usage } = await refinePageTextWithMini(rawExtraction);
+        pageContext = refinedText;
+        extractionUsage = usage;
+
+        console.log('Page context ready:', {
+          url: pageUrl.trim(),
+          contextLength: pageContext.length,
+          extractionCost: `$${extractionUsage.estimated_cost_usd.toFixed(6)}`
+        });
+      } catch (extractionError) {
+        console.error('Page extraction failed (continuing without it):', extractionError.message);
+        // Non-fatal: continue generation without page context
+      }
+    }
+
     let result;
 
     // Route to appropriate API based on provider and API type
     if (modelConfig.provider === 'anthropic') {
       // Use Anthropic Messages API (Claude)
-      result = await generateWithAnthropicAPI(modelConfig, businessInfo, emailGuidelines, systemPrompt || '', userPrompt);
+      result = await generateWithAnthropicAPI(modelConfig, businessInfo, emailGuidelines, systemPrompt || '', userPrompt, pageContext);
     } else if (modelConfig.provider === 'xai') {
       // Use xAI client with Chat Completions API
       const xaiClient = getXAIClient();
-      const messages = buildChatMessages(businessInfo, emailGuidelines, systemPrompt || '', userPrompt);
+      const messages = buildChatMessages(businessInfo, emailGuidelines, systemPrompt || '', userPrompt, pageContext);
       result = await generateWithChatAPI(xaiClient, modelConfig, messages);
     } else if (modelConfig.apiType === 'responses') {
       // Use OpenAI Responses API (GPT-5.2)
       const openaiClient = getOpenAIClient();
-      const input = buildTextEmailInput(businessInfo, emailGuidelines, systemPrompt || '', userPrompt);
+      const input = buildTextEmailInput(businessInfo, emailGuidelines, systemPrompt || '', userPrompt, pageContext);
       result = await generateWithResponsesAPI(openaiClient, modelConfig, input);
     } else {
       // Fallback to Chat Completions API
       const openaiClient = getOpenAIClient();
-      const messages = buildChatMessages(businessInfo, emailGuidelines, systemPrompt || '', userPrompt);
+      const messages = buildChatMessages(businessInfo, emailGuidelines, systemPrompt || '', userPrompt, pageContext);
       result = await generateWithChatAPI(openaiClient, modelConfig, messages);
     }
 
@@ -377,10 +599,19 @@ export async function POST(request) {
       }, { status: 500 });
     }
 
+    // Combine usage: extraction + generation
+    const combinedUsage = { ...result.usage };
+    if (extractionUsage) {
+      combinedUsage.extraction = extractionUsage;
+      combinedUsage.total_tokens += extractionUsage.total_tokens;
+      combinedUsage.estimated_cost_usd += extractionUsage.estimated_cost_usd;
+    }
+
     return Response.json({
       success: true,
       content: result.content,
-      usage: result.usage
+      usage: combinedUsage,
+      pageExtracted: !!pageContext
     });
 
   } catch (error) {

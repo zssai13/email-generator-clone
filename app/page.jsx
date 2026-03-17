@@ -81,6 +81,7 @@ export default function Home() {
   const [generatedTextEmail, setGeneratedTextEmail] = useState(null);
   const [textEmailUsage, setTextEmailUsage] = useState(null);
   const [textEmailCopied, setTextEmailCopied] = useState(false);
+  const [textEmailPageUrl, setTextEmailPageUrl] = useState('');
 
   // Model options for Tab 2 dropdown
   const modelOptions = [
@@ -92,7 +93,8 @@ export default function Home() {
     { value: 'gpt-4o-extract-mini-generate', label: 'GPT-4o Extract + Mini Generate', provider: 'openai-hybrid' },
     { value: 'claude-sonnet-extract-mini-generate', label: 'Claude Sonnet Extract + Mini Generate', provider: 'claude-hybrid' },
     { value: 'claude-haiku-extract-mini-generate', label: 'Claude Haiku Extract + Mini Generate', provider: 'claude-hybrid' },
-    { value: 'manual-extract-mini-refine-generate', label: 'Manual Extract + Mini Refine + Generate (Cheapest)', provider: 'manual-hybrid' },
+    { value: 'manual-extract-mini-refine-generate', label: 'Manual Extract + GPT-4o Mini Refine + Generate', provider: 'manual-hybrid' },
+    { value: 'manual-extract-5-mini-refine-generate', label: 'Manual Extract + GPT-5 Mini Refine + Generate', provider: 'manual-5-mini-hybrid' },
     { value: 'manual-extract-opus-refine-generate', label: 'Manual Extract + Opus 4.6 Refine + Generate', provider: 'manual-opus-hybrid' },
     { value: 'manual-extract-sonnet-refine-generate', label: 'Manual Extract + Sonnet 4.5 Refine + Generate', provider: 'manual-sonnet-hybrid' },
     { value: 'manual-extract-haiku-refine-generate', label: 'Manual Extract + Haiku 4.5 Refine + Generate (Cheapest Claude)', provider: 'manual-haiku-hybrid' }
@@ -319,7 +321,9 @@ export default function Home() {
     } else if (selectedModel === 'claude-haiku-extract-mini-generate') {
       setTemplateStatus('Step 1: Extracting product data with Claude Haiku...');
     } else if (selectedModel === 'manual-extract-mini-refine-generate') {
-      setTemplateStatus('Step 1: Manually extracting product data...');
+      setTemplateStatus('Step 1: Manually extracting product data → GPT-4o Mini refine + generate...');
+    } else if (selectedModel === 'manual-extract-5-mini-refine-generate') {
+      setTemplateStatus('Step 1: Manually extracting product data → GPT-5 Mini refine + generate...');
     } else if (selectedModel === 'manual-extract-opus-refine-generate') {
       setTemplateStatus('Step 1: Manually extracting product data → Opus 4.6 refine + generate...');
     } else if (selectedModel === 'manual-extract-sonnet-refine-generate') {
@@ -502,7 +506,10 @@ export default function Home() {
     setTextEmailError('');
     setGeneratedTextEmail(null);
     setTextEmailUsage(null);
-    setTextEmailStatus(`Generating with ${textEmailModelOptions.find(m => m.value === textEmailModel)?.label || textEmailModel}...`);
+    const modelLabel = textEmailModelOptions.find(m => m.value === textEmailModel)?.label || textEmailModel;
+    setTextEmailStatus(textEmailPageUrl.trim()
+      ? `Extracting page + Generating with ${modelLabel}...`
+      : `Generating with ${modelLabel}...`);
     setTextEmailCopied(false);
 
     try {
@@ -514,7 +521,8 @@ export default function Home() {
           emailGuidelines: guidelinesContent.trim(),
           systemPrompt: textEmailSystemPrompt.trim(),
           userPrompt: textEmailUserPrompt.trim(),
-          model: textEmailModel
+          model: textEmailModel,
+          pageUrl: textEmailPageUrl.trim()
         })
       });
 
@@ -1234,6 +1242,28 @@ export default function Home() {
                 </div>
               </div>
 
+              {/* Page URL (Optional) */}
+              <div className="mb-4">
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
+                  Page URL <span className="text-slate-400 font-normal normal-case">(optional - extracts page content as context)</span>
+                </label>
+                <input
+                  type="url"
+                  value={textEmailPageUrl}
+                  onChange={(e) => {
+                    setTextEmailPageUrl(e.target.value);
+                    if (textEmailError) setTextEmailError('');
+                  }}
+                  placeholder="https://example.com/about or https://example.com/product-page"
+                  className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-800 focus:border-transparent text-sm transition-all"
+                />
+                {textEmailPageUrl && (
+                  <p className="text-xs text-slate-500 mt-1">
+                    Page will be extracted with Cheerio + refined with GPT-4o Mini (low cost)
+                  </p>
+                )}
+              </div>
+
               {/* System Prompt */}
               <div className="mb-4">
                 <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
@@ -1326,6 +1356,17 @@ export default function Home() {
                           {textEmailUsage.generation_time_ms ? `${(textEmailUsage.generation_time_ms / 1000).toFixed(2)}s` : 'N/A'}
                         </span>
                       </div>
+                      {textEmailUsage.extraction && (
+                        <div className="flex items-center gap-2">
+                          <span className="text-slate-600 font-medium">Extraction:</span>
+                          <span className="text-blue-600 font-bold">
+                            ${textEmailUsage.extraction.estimated_cost_usd?.toFixed(6) || '0.000000'}
+                          </span>
+                          <span className="text-slate-400 text-xs">
+                            ({textEmailUsage.extraction.total_tokens?.toLocaleString()} tokens)
+                          </span>
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
@@ -1402,7 +1443,7 @@ export default function Home() {
                   Upload your business research and email guidelines as markdown files, then enter your prompts to generate personalized text emails.
                 </p>
                 <div className="inline-block px-4 py-2 bg-slate-100 rounded-lg text-xs text-slate-600 font-mono">
-                  GPT-5.2 powered • RAG-enhanced • Plain text output
+                  GPT-5.2 powered • RAG-enhanced • URL extraction • Plain text output
                 </div>
               </div>
             )}
