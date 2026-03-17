@@ -332,6 +332,63 @@ Keep the summary concise but comprehensive (aim for 500-1500 words). Use markdow
   };
 }
 
+// Pre-summarize RAG data with GPT-4o Mini to reduce input tokens for expensive models
+async function presummarizeWithMini(businessInfo, userPrompt) {
+  const openaiClient = getOpenAIClient();
+
+  const presummaryPrompt = `You are a context extraction assistant. Your task is to read a business knowledge base and a user's email request, then extract ONLY the sections relevant to writing that specific email.
+
+## User's Email Request:
+${userPrompt}
+
+## Full Business Knowledge Base:
+${businessInfo}
+
+## Instructions:
+1. Read the user's email request carefully to understand what email they want to write
+2. Extract ONLY the sections from the knowledge base that are directly relevant to this specific email
+3. PRESERVE exact details: product names, prices, ingredients, policies, testimonials — do NOT paraphrase or summarize numbers/claims
+4. ALWAYS include the tone/style guidance section (it applies to every email)
+5. DROP: irrelevant products, source URLs/citations, duplicate sections that repeat the same info, general background not needed for this specific email
+6. Output clean markdown with the relevant extracted sections
+7. Aim for 500-1000 words of highly relevant context`;
+
+  const response = await openaiClient.chat.completions.create({
+    model: 'gpt-4o-mini',
+    messages: [{ role: 'user', content: presummaryPrompt }],
+    max_tokens: 2000
+  });
+
+  const inputTokens = response.usage?.prompt_tokens || 0;
+  const outputTokens = response.usage?.completion_tokens || 0;
+
+  // GPT-4o Mini pricing: $0.15/1M input, $0.60/1M output
+  const MINI_INPUT = 0.00015 / 1000;
+  const MINI_OUTPUT = 0.0006 / 1000;
+  const cost = (inputTokens * MINI_INPUT) + (outputTokens * MINI_OUTPUT);
+
+  const condensedContext = response.choices[0]?.message?.content || businessInfo;
+
+  console.log('RAG Pre-Summary Complete:', {
+    original_length: businessInfo.length,
+    condensed_length: condensedContext.length,
+    reduction: `${Math.round((1 - condensedContext.length / businessInfo.length) * 100)}%`,
+    input_tokens: inputTokens,
+    output_tokens: outputTokens,
+    cost: `$${cost.toFixed(6)}`
+  });
+
+  return {
+    condensedContext,
+    presummaryUsage: {
+      input_tokens: inputTokens,
+      output_tokens: outputTokens,
+      total_tokens: inputTokens + outputTokens,
+      estimated_cost_usd: cost
+    }
+  };
+}
+
 // Generate text email using OpenAI Responses API (GPT-5.2)
 async function generateWithResponsesAPI(client, config, input) {
   const startTime = Date.now();
@@ -467,7 +524,7 @@ function isValidMarkdown(content) {
 
 export async function POST(request) {
   try {
-    const { businessInfo, emailGuidelines, systemPrompt, userPrompt, model, pageUrl } = await request.json();
+    const { businessInfo, emailGuidelines, systemPrompt, userPrompt, model, pageUrl, presummarize } = await request.json();
 
     // Validate model
     const validModels = ['gpt-5.2', 'gpt-5.2-pro', 'grok-4-1-fast', 'claude-opus-4-6'];
@@ -569,26 +626,48 @@ export async function POST(request) {
       }
     }
 
+    // Optional: Pre-summarize RAG data with GPT-4o Mini to reduce cost
+    let effectiveBusinessInfo = businessInfo;
+    let presummaryUsage = null;
+
+    if (presummarize && businessInfo && businessInfo.trim()) {
+      try {
+        console.log('Pre-summarizing RAG data with GPT-4o Mini...');
+        const { condensedContext, presummaryUsage: usage } = await presummarizeWithMini(businessInfo, userPrompt);
+        effectiveBusinessInfo = condensedContext;
+        presummaryUsage = usage;
+
+        console.log('RAG pre-summary ready:', {
+          originalLength: businessInfo.length,
+          condensedLength: condensedContext.length,
+          presummaryCost: `$${presummaryUsage.estimated_cost_usd.toFixed(6)}`
+        });
+      } catch (presummaryError) {
+        console.error('Pre-summary failed (using full RAG):', presummaryError.message);
+        // Non-fatal: continue with full businessInfo
+      }
+    }
+
     let result;
 
     // Route to appropriate API based on provider and API type
     if (modelConfig.provider === 'anthropic') {
       // Use Anthropic Messages API (Claude)
-      result = await generateWithAnthropicAPI(modelConfig, businessInfo, emailGuidelines, systemPrompt || '', userPrompt, pageContext);
+      result = await generateWithAnthropicAPI(modelConfig, effectiveBusinessInfo, emailGuidelines, systemPrompt || '', userPrompt, pageContext);
     } else if (modelConfig.provider === 'xai') {
       // Use xAI client with Chat Completions API
       const xaiClient = getXAIClient();
-      const messages = buildChatMessages(businessInfo, emailGuidelines, systemPrompt || '', userPrompt, pageContext);
+      const messages = buildChatMessages(effectiveBusinessInfo, emailGuidelines, systemPrompt || '', userPrompt, pageContext);
       result = await generateWithChatAPI(xaiClient, modelConfig, messages);
     } else if (modelConfig.apiType === 'responses') {
       // Use OpenAI Responses API (GPT-5.2)
       const openaiClient = getOpenAIClient();
-      const input = buildTextEmailInput(businessInfo, emailGuidelines, systemPrompt || '', userPrompt, pageContext);
+      const input = buildTextEmailInput(effectiveBusinessInfo, emailGuidelines, systemPrompt || '', userPrompt, pageContext);
       result = await generateWithResponsesAPI(openaiClient, modelConfig, input);
     } else {
       // Fallback to Chat Completions API
       const openaiClient = getOpenAIClient();
-      const messages = buildChatMessages(businessInfo, emailGuidelines, systemPrompt || '', userPrompt, pageContext);
+      const messages = buildChatMessages(effectiveBusinessInfo, emailGuidelines, systemPrompt || '', userPrompt, pageContext);
       result = await generateWithChatAPI(openaiClient, modelConfig, messages);
     }
 
@@ -599,8 +678,13 @@ export async function POST(request) {
       }, { status: 500 });
     }
 
-    // Combine usage: extraction + generation
+    // Combine usage: presummary + extraction + generation
     const combinedUsage = { ...result.usage };
+    if (presummaryUsage) {
+      combinedUsage.presummary = presummaryUsage;
+      combinedUsage.total_tokens += presummaryUsage.total_tokens;
+      combinedUsage.estimated_cost_usd += presummaryUsage.estimated_cost_usd;
+    }
     if (extractionUsage) {
       combinedUsage.extraction = extractionUsage;
       combinedUsage.total_tokens += extractionUsage.total_tokens;
@@ -611,7 +695,8 @@ export async function POST(request) {
       success: true,
       content: result.content,
       usage: combinedUsage,
-      pageExtracted: !!pageContext
+      pageExtracted: !!pageContext,
+      presummarized: !!presummaryUsage
     });
 
   } catch (error) {

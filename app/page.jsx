@@ -82,6 +82,7 @@ export default function Home() {
   const [textEmailUsage, setTextEmailUsage] = useState(null);
   const [textEmailCopied, setTextEmailCopied] = useState(false);
   const [textEmailPageUrl, setTextEmailPageUrl] = useState('');
+  const [textEmailPresummarize, setTextEmailPresummarize] = useState(false);
 
   // Model options for Tab 2 dropdown
   const modelOptions = [
@@ -507,9 +508,11 @@ export default function Home() {
     setGeneratedTextEmail(null);
     setTextEmailUsage(null);
     const modelLabel = textEmailModelOptions.find(m => m.value === textEmailModel)?.label || textEmailModel;
-    setTextEmailStatus(textEmailPageUrl.trim()
-      ? `Extracting page + Generating with ${modelLabel}...`
-      : `Generating with ${modelLabel}...`);
+    const statusParts = [];
+    if (textEmailPresummarize) statusParts.push('Pre-summarizing RAG');
+    if (textEmailPageUrl.trim()) statusParts.push('Extracting page');
+    statusParts.push(`Generating with ${modelLabel}`);
+    setTextEmailStatus(statusParts.join(' + ') + '...');
     setTextEmailCopied(false);
 
     try {
@@ -522,7 +525,8 @@ export default function Home() {
           systemPrompt: textEmailSystemPrompt.trim(),
           userPrompt: textEmailUserPrompt.trim(),
           model: textEmailModel,
-          pageUrl: textEmailPageUrl.trim()
+          pageUrl: textEmailPageUrl.trim(),
+          presummarize: textEmailPresummarize
         })
       });
 
@@ -1242,6 +1246,28 @@ export default function Home() {
                 </div>
               </div>
 
+              {/* Pre-summarize Checkbox */}
+              {businessInfoContent && (
+                <div className="mb-4">
+                  <label className="flex items-center gap-3 cursor-pointer group">
+                    <input
+                      type="checkbox"
+                      checked={textEmailPresummarize}
+                      onChange={(e) => setTextEmailPresummarize(e.target.checked)}
+                      className="w-4 h-4 rounded border-2 border-slate-300 text-slate-800 focus:ring-slate-800 cursor-pointer"
+                    />
+                    <span className="text-sm text-slate-700 group-hover:text-slate-900">
+                      Pre-summarize RAG with GPT-4o Mini <span className="text-green-600 font-semibold">(reduces cost ~60%)</span>
+                    </span>
+                  </label>
+                  {textEmailPresummarize && (
+                    <p className="text-xs text-slate-500 mt-1 ml-7">
+                      Mini extracts only relevant sections from your RAG data before sending to the main model
+                    </p>
+                  )}
+                </div>
+              )}
+
               {/* Page URL (Optional) */}
               <div className="mb-4">
                 <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
@@ -1356,6 +1382,17 @@ export default function Home() {
                           {textEmailUsage.generation_time_ms ? `${(textEmailUsage.generation_time_ms / 1000).toFixed(2)}s` : 'N/A'}
                         </span>
                       </div>
+                      {textEmailUsage.presummary && (
+                        <div className="flex items-center gap-2">
+                          <span className="text-slate-600 font-medium">Pre-summary:</span>
+                          <span className="text-purple-600 font-bold">
+                            ${textEmailUsage.presummary.estimated_cost_usd?.toFixed(6) || '0.000000'}
+                          </span>
+                          <span className="text-slate-400 text-xs">
+                            ({textEmailUsage.presummary.total_tokens?.toLocaleString()} tokens)
+                          </span>
+                        </div>
+                      )}
                       {textEmailUsage.extraction && (
                         <div className="flex items-center gap-2">
                           <span className="text-slate-600 font-medium">Extraction:</span>
