@@ -41,6 +41,20 @@ function getXAIClient() {
   });
 }
 
+// Initialize DeepSeek client lazily (OpenAI-compatible)
+function getDeepSeekClient() {
+  const apiKey = process.env.DEEPSEEK_API_KEY;
+
+  if (!apiKey) {
+    throw new Error('DeepSeek API key is not configured. Please set DEEPSEEK_API_KEY environment variable.');
+  }
+
+  return new OpenAI({
+    apiKey,
+    baseURL: 'https://api.deepseek.com'
+  });
+}
+
 // URL validation helper
 function isValidUrl(string) {
   try {
@@ -83,6 +97,12 @@ function getModelConfig(model) {
       maxOutputTokens: 4000,
       provider: 'anthropic',
       apiType: 'messages'
+    },
+    'deepseek-v4-pro': {
+      modelId: 'deepseek-v4-pro',
+      maxOutputTokens: 4000,
+      provider: 'deepseek',
+      apiType: 'chat'
     }
   };
   return configs[model] || configs['gpt-5.2'];
@@ -156,7 +176,8 @@ function calculateCost(modelId, usage) {
     'gpt-5.2-pro': { input: 0.010, output: 0.040 },
     'grok-4-1-fast': { input: 0.003, output: 0.015 },  // Placeholder xAI pricing
     'claude-opus-4-6': { input: 0.005, output: 0.025 },  // $5/$25 per 1M tokens
-    'claude-opus-4-7': { input: 0.005, output: 0.025 }  // $5/$25 per 1M tokens (placeholder, mirrors 4.6)
+    'claude-opus-4-7': { input: 0.005, output: 0.025 },  // $5/$25 per 1M tokens (placeholder, mirrors 4.6)
+    'deepseek-v4-pro': { input: 0.00174, output: 0.00348 }  // $1.74/$3.48 per 1M tokens (cache-miss standard)
   };
 
   const modelPricing = pricing[modelId] || pricing['gpt-5.2'];
@@ -534,7 +555,7 @@ export async function POST(request) {
     const { businessInfo, emailGuidelines, systemPrompt, userPrompt, model, pageUrl, presummarize } = await request.json();
 
     // Validate model
-    const validModels = ['gpt-5.2', 'gpt-5.2-pro', 'grok-4-1-fast', 'claude-opus-4-6', 'claude-opus-4-7'];
+    const validModels = ['gpt-5.2', 'gpt-5.2-pro', 'grok-4-1-fast', 'claude-opus-4-6', 'claude-opus-4-7', 'deepseek-v4-pro'];
     const selectedModel = model || 'gpt-5.2';
 
     if (!validModels.includes(selectedModel)) {
@@ -608,6 +629,12 @@ export async function POST(request) {
       }, { status: 500 });
     }
 
+    if (modelConfig.provider === 'deepseek' && !process.env.DEEPSEEK_API_KEY) {
+      return Response.json({
+        error: 'DeepSeek API key is required but not configured. Please add DEEPSEEK_API_KEY to your environment variables.'
+      }, { status: 500 });
+    }
+
     // Optional: Extract page context from URL
     let pageContext = '';
     let extractionUsage = null;
@@ -666,6 +693,11 @@ export async function POST(request) {
       const xaiClient = getXAIClient();
       const messages = buildChatMessages(effectiveBusinessInfo, emailGuidelines, systemPrompt || '', userPrompt, pageContext);
       result = await generateWithChatAPI(xaiClient, modelConfig, messages);
+    } else if (modelConfig.provider === 'deepseek') {
+      // Use DeepSeek client with Chat Completions API (OpenAI-compatible)
+      const deepseekClient = getDeepSeekClient();
+      const messages = buildChatMessages(effectiveBusinessInfo, emailGuidelines, systemPrompt || '', userPrompt, pageContext);
+      result = await generateWithChatAPI(deepseekClient, modelConfig, messages);
     } else if (modelConfig.apiType === 'responses') {
       // Use OpenAI Responses API (GPT-5.2)
       const openaiClient = getOpenAIClient();

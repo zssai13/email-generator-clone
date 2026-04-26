@@ -107,7 +107,8 @@ export default function Home() {
     { value: 'gpt-5.2-pro', label: 'GPT-5.2 Pro' },
     { value: 'grok-4-1-fast', label: 'Grok 4.1 Fast (Reasoning)' },
     { value: 'claude-opus-4-6', label: 'Claude Opus 4.6' },
-    { value: 'claude-opus-4-7', label: 'Claude Opus 4.7' }
+    { value: 'claude-opus-4-7', label: 'Claude Opus 4.7' },
+    { value: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro' }
   ];
 
   const parseEmails = (text) => {
