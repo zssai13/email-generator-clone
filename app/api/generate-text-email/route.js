@@ -77,6 +77,12 @@ function getModelConfig(model) {
       maxOutputTokens: 4000,
       provider: 'anthropic',
       apiType: 'messages'
+    },
+    'claude-opus-4-7': {
+      modelId: 'claude-opus-4-7',
+      maxOutputTokens: 4000,
+      provider: 'anthropic',
+      apiType: 'messages'
     }
   };
   return configs[model] || configs['gpt-5.2'];
@@ -149,7 +155,8 @@ function calculateCost(modelId, usage) {
     'gpt-5.2': { input: 0.002, output: 0.008 },
     'gpt-5.2-pro': { input: 0.010, output: 0.040 },
     'grok-4-1-fast': { input: 0.003, output: 0.015 },  // Placeholder xAI pricing
-    'claude-opus-4-6': { input: 0.005, output: 0.025 }  // $5/$25 per 1M tokens
+    'claude-opus-4-6': { input: 0.005, output: 0.025 },  // $5/$25 per 1M tokens
+    'claude-opus-4-7': { input: 0.005, output: 0.025 }  // $5/$25 per 1M tokens (placeholder, mirrors 4.6)
   };
 
   const modelPricing = pricing[modelId] || pricing['gpt-5.2'];
@@ -527,7 +534,7 @@ export async function POST(request) {
     const { businessInfo, emailGuidelines, systemPrompt, userPrompt, model, pageUrl, presummarize } = await request.json();
 
     // Validate model
-    const validModels = ['gpt-5.2', 'gpt-5.2-pro', 'grok-4-1-fast', 'claude-opus-4-6'];
+    const validModels = ['gpt-5.2', 'gpt-5.2-pro', 'grok-4-1-fast', 'claude-opus-4-6', 'claude-opus-4-7'];
     const selectedModel = model || 'gpt-5.2';
 
     if (!validModels.includes(selectedModel)) {
