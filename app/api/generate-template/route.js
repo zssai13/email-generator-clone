@@ -37,7 +37,9 @@ function getDeepSeekClient() {
 
   return new OpenAI({
     apiKey,
-    baseURL: 'https://api.deepseek.com'
+    baseURL: 'https://api.deepseek.com/v1',
+    timeout: 240000,
+    maxRetries: 2
   });
 }
 
@@ -2116,12 +2118,28 @@ No markdown, no code blocks, no explanations.`;
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
 
-  const response = await deepseekClient.chat.completions.create({
-    model: modelId,
-    messages: [{ role: 'user', content: refinementPrompt }],
-    max_tokens: 2000,
-    response_format: { type: 'json_object' }
-  });
+  let response;
+  try {
+    response = await deepseekClient.chat.completions.create({
+      model: modelId,
+      messages: [
+        { role: 'system', content: 'You are a JSON-only response assistant. Output valid JSON.' },
+        { role: 'user', content: refinementPrompt }
+      ],
+      max_tokens: 2000,
+      response_format: { type: 'json_object' }
+    });
+  } catch (apiError) {
+    console.error(`DeepSeek refinement API call failed (${modelId}):`, {
+      message: apiError?.message,
+      status: apiError?.status,
+      code: apiError?.code,
+      type: apiError?.type,
+      cause: apiError?.cause?.message,
+      name: apiError?.name
+    });
+    throw new Error(`DeepSeek refinement failed (${modelId}): ${apiError?.status || 'connection error'} — ${apiError?.message || apiError}`);
+  }
 
   if (response.usage) {
     totalInputTokens += response.usage.prompt_tokens || 0;
@@ -2179,11 +2197,24 @@ Return ONLY the complete HTML starting with <!DOCTYPE html> and ending with </ht
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
 
-  const response = await deepseekClient.chat.completions.create({
-    model: modelId,
-    messages: [{ role: 'user', content: generationPrompt }],
-    max_tokens: 16000
-  });
+  let response;
+  try {
+    response = await deepseekClient.chat.completions.create({
+      model: modelId,
+      messages: [{ role: 'user', content: generationPrompt }],
+      max_tokens: 8000
+    });
+  } catch (apiError) {
+    console.error(`DeepSeek generation API call failed (${modelId}):`, {
+      message: apiError?.message,
+      status: apiError?.status,
+      code: apiError?.code,
+      type: apiError?.type,
+      cause: apiError?.cause?.message,
+      name: apiError?.name
+    });
+    throw new Error(`DeepSeek generation failed (${modelId}): ${apiError?.status || 'connection error'} — ${apiError?.message || apiError}`);
+  }
 
   if (response.usage) {
     totalInputTokens += response.usage.prompt_tokens || 0;
