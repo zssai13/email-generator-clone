@@ -98,7 +98,9 @@ export default function Home() {
     { value: 'manual-extract-5-mini-refine-generate', label: 'Manual Extract + GPT-5 Mini Refine + Generate', provider: 'manual-5-mini-hybrid' },
     { value: 'manual-extract-opus-refine-generate', label: 'Manual Extract + Opus 4.6 Refine + Generate', provider: 'manual-opus-hybrid' },
     { value: 'manual-extract-sonnet-refine-generate', label: 'Manual Extract + Sonnet 4.5 Refine + Generate', provider: 'manual-sonnet-hybrid' },
-    { value: 'manual-extract-haiku-refine-generate', label: 'Manual Extract + Haiku 4.5 Refine + Generate (Cheapest Claude)', provider: 'manual-haiku-hybrid' }
+    { value: 'manual-extract-haiku-refine-generate', label: 'Manual Extract + Haiku 4.5 Refine + Generate (Cheapest Claude)', provider: 'manual-haiku-hybrid' },
+    { value: 'manual-extract-deepseek-flash-refine-generate', label: 'Manual Extract + DeepSeek V4 Flash Refine + Generate (Cheapest)', provider: 'manual-deepseek-hybrid' },
+    { value: 'manual-extract-deepseek-pro-refine-generate', label: 'Manual Extract + DeepSeek V4 Pro Refine + Generate', provider: 'manual-deepseek-hybrid' }
   ];
 
   // Model options for Tab 3 (Text Email Generator)
@@ -668,6 +670,7 @@ export default function Home() {
               >
                 <option value="claude-opus-4-5">Opus 4.5</option>
                 <option value="claude-opus-4-6">Opus 4.6</option>
+                <option value="claude-opus-4-7">Opus 4.7</option>
               </select>
             </div>
             <div className="md:col-span-2">

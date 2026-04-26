@@ -19,12 +19,26 @@ function getAnthropicClient() {
 // Initialize OpenAI client lazily - uses environment variable only
 function getOpenAIClient() {
   const apiKey = process.env.OPENAI_API_KEY;
-  
+
   if (!apiKey) {
     throw new Error('OpenAI API key is not configured. Please set OPENAI_API_KEY environment variable.');
   }
-  
+
   return new OpenAI({ apiKey });
+}
+
+// Initialize DeepSeek client lazily (OpenAI-compatible)
+function getDeepSeekClient() {
+  const apiKey = process.env.DEEPSEEK_API_KEY;
+
+  if (!apiKey) {
+    throw new Error('DeepSeek API key is not configured. Please set DEEPSEEK_API_KEY environment variable.');
+  }
+
+  return new OpenAI({
+    apiKey,
+    baseURL: 'https://api.deepseek.com'
+  });
 }
 
 // Define the tool Claude can use
@@ -188,6 +202,20 @@ function getModelConfig(model) {
       refineModelId: 'claude-haiku-4-5-20251001',
       generateModelId: 'claude-haiku-4-5-20251001',
       maxTokens: 16000
+    },
+    'manual-extract-deepseek-flash-refine-generate': {
+      provider: 'manual-deepseek-hybrid',
+      extractMethod: 'manual',
+      refineModelId: 'deepseek-v4-flash',
+      generateModelId: 'deepseek-v4-flash',
+      maxTokens: 16000
+    },
+    'manual-extract-deepseek-pro-refine-generate': {
+      provider: 'manual-deepseek-hybrid',
+      extractMethod: 'manual',
+      refineModelId: 'deepseek-v4-pro',
+      generateModelId: 'deepseek-v4-pro',
+      maxTokens: 16000
     }
   };
   return configs[model] || configs['claude-opus-4-5'];
@@ -310,11 +338,25 @@ function calculateOpenAICost(modelId, inputTokens, outputTokens) {
     'gpt-4o-mini': { input: 0.00015, output: 0.0006 }, // per 1K tokens
     'gpt-5-mini': { input: 0.00025, output: 0.002 } // per 1K tokens
   };
-  
+
   const modelPricing = pricing[modelId] || pricing['gpt-4o-mini'];
   const inputCost = (inputTokens / 1000) * modelPricing.input;
   const outputCost = (outputTokens / 1000) * modelPricing.output;
-  
+
+  return (inputCost + outputCost).toFixed(6);
+}
+
+// Calculate DeepSeek cost based on token usage (cache-miss standard pricing)
+function calculateDeepSeekCost(modelId, inputTokens, outputTokens) {
+  const pricing = {
+    'deepseek-v4-flash': { input: 0.00014, output: 0.00028 }, // $0.14/$0.28 per 1M
+    'deepseek-v4-pro': { input: 0.00174, output: 0.00348 }    // $1.74/$3.48 per 1M
+  };
+
+  const modelPricing = pricing[modelId] || pricing['deepseek-v4-flash'];
+  const inputCost = (inputTokens / 1000) * modelPricing.input;
+  const outputCost = (outputTokens / 1000) * modelPricing.output;
+
   return (inputCost + outputCost).toFixed(6);
 }
 
@@ -2003,6 +2045,210 @@ async function generateWithManualExtractMiniRefineGenerate(productUrl, emailTemp
   };
 }
 
+// Refine extracted data using DeepSeek (V4 Flash or V4 Pro)
+async function refineProductDataWithDeepSeek(rawData, productUrl, modelId) {
+  const deepseekClient = getDeepSeekClient();
+
+  const imageContext = rawData.images.map((img, index) => {
+    const contextInfo = [];
+    if (img.priority === 0) contextInfo.push('HIGHEST PRIORITY (og:image or JSON-LD - confirmed main product image)');
+    else if (img.priority === 1) contextInfo.push('HIGH PRIORITY (hero/main/Shopify-CDN selector)');
+    if (img.isInHero) contextInfo.push('in hero section');
+    if (img.isInProductSection) contextInfo.push('in product section');
+    if (img.isEarlyInPage) contextInfo.push('appears early in page');
+    if (img.width && img.width > 500) contextInfo.push(`large (${img.width}px wide)`);
+    if (img.context) contextInfo.push(`found via: ${img.context}`);
+
+    return {
+      url: img.url,
+      index: index,
+      context: contextInfo.join(', ') || 'general image',
+      priority: img.priority,
+      width: img.width
+    };
+  });
+
+  const refinementPrompt = `Review and refine this extracted product data from ${productUrl}:
+
+Product Data:
+- Title: ${rawData.title}
+- Price: ${rawData.price}
+- Description: ${rawData.description.substring(0, 200)}${rawData.description.length > 200 ? '...' : ''}
+
+Images Found (${rawData.images.length} total):
+${imageContext.map(img => `[${img.index}] ${img.url}\n     Context: ${img.context}`).join('\n\n')}
+
+CRITICAL INSTRUCTIONS FOR IMAGE PRIORITIZATION:
+1. The MAIN HERO/PRODUCT IMAGE should be FIRST in the images array
+2. Prioritize images with:
+   - HIGHEST PRIORITY (priority 0) - these are from og:image or JSON-LD structured data, ALWAYS use these first as they are the confirmed main product image
+   - HIGH PRIORITY (priority 1) - these were found using hero/main/Shopify-CDN selectors
+   - "in hero section" - these are in the hero area
+   - "appears early in page" - main images appear before description
+   - Large width (>500px) - main product images are typically large
+   - Images from cdn.shopify.com or /cdn/shop/ paths are actual product photos
+   - Context containing "hero", "main", "primary", "shopify-main", "woocommerce-main"
+3. EXCLUDE images that are:
+   - Thumbnails (small width, <300px)
+   - Logos or icons
+   - Not product-related
+4. Keep only the TOP 5 images (main hero + 4 best product images)
+5. Convert any remaining relative URLs to absolute URLs (base: ${productUrl})
+
+Please:
+1. Validate all fields are present and reasonable
+2. Prioritize main product hero image FIRST (use context clues above)
+3. Clean price formatting (ensure it's a valid price format like "$XX.XX")
+4. Improve description if it's too short or unclear (keep under 500 chars)
+5. Ensure title is clean and readable
+
+Return ONLY valid JSON in this exact format:
+{
+  "title": "Product title",
+  "price": "Product price",
+  "description": "Product description",
+  "images": ["main_hero_image_url", "product_image_2", "product_image_3", "product_image_4", "product_image_5"],
+  "url": "${productUrl}"
+}
+
+No markdown, no code blocks, no explanations.`;
+
+  let totalInputTokens = 0;
+  let totalOutputTokens = 0;
+
+  const response = await deepseekClient.chat.completions.create({
+    model: modelId,
+    messages: [{ role: 'user', content: refinementPrompt }],
+    max_tokens: 2000,
+    response_format: { type: 'json_object' }
+  });
+
+  if (response.usage) {
+    totalInputTokens += response.usage.prompt_tokens || 0;
+    totalOutputTokens += response.usage.completion_tokens || 0;
+  }
+
+  let refinedData;
+  try {
+    const content = response.choices[0].message.content || '{}';
+    refinedData = JSON.parse(content);
+  } catch (error) {
+    console.error(`Error parsing ${modelId} refined data:`, error);
+    refinedData = rawData;
+  }
+
+  const refinementCost = calculateDeepSeekCost(modelId, totalInputTokens, totalOutputTokens);
+
+  console.log(`${modelId} Refinement Complete:`, {
+    tokens_used: totalInputTokens + totalOutputTokens,
+    cost: `$${parseFloat(refinementCost).toFixed(6)}`,
+    images_count: refinedData.images?.length || 0
+  });
+
+  return {
+    productData: refinedData,
+    refinementUsage: {
+      input_tokens: totalInputTokens,
+      output_tokens: totalOutputTokens,
+      total_tokens: totalInputTokens + totalOutputTokens,
+      estimated_cost_usd: parseFloat(refinementCost)
+    }
+  };
+}
+
+// Generate email using DeepSeek (V4 Flash or V4 Pro) with extracted data
+async function generateEmailWithDeepSeek(template, productData, customPrompt, modelId) {
+  const deepseekClient = getDeepSeekClient();
+
+  const generationPrompt = `Create an ecommerce promotional email using the following email template structure and the provided product data.
+
+Email Template:
+${template}
+
+Product Data:
+${JSON.stringify(productData, null, 2)}
+
+${customPrompt ? `Additional Instructions: ${customPrompt}` : ''}
+
+Return ONLY the complete HTML starting with <!DOCTYPE html> and ending with </html>.
+- Use the product data to fill in the template
+- Replace product titles, prices, images, and descriptions with the extracted data
+- Preserve the template's structure and styling
+- No markdown, no code blocks, no explanations`;
+
+  let totalInputTokens = 0;
+  let totalOutputTokens = 0;
+
+  const response = await deepseekClient.chat.completions.create({
+    model: modelId,
+    messages: [{ role: 'user', content: generationPrompt }],
+    max_tokens: 16000
+  });
+
+  if (response.usage) {
+    totalInputTokens += response.usage.prompt_tokens || 0;
+    totalOutputTokens += response.usage.completion_tokens || 0;
+  }
+
+  const rawResponse = response.choices[0].message.content || '';
+
+  const generationCost = calculateDeepSeekCost(modelId, totalInputTokens, totalOutputTokens);
+
+  console.log(`${modelId} Generation Complete:`, {
+    tokens_used: totalInputTokens + totalOutputTokens,
+    cost: `$${parseFloat(generationCost).toFixed(6)}`
+  });
+
+  return {
+    content: rawResponse,
+    generationUsage: {
+      input_tokens: totalInputTokens,
+      output_tokens: totalOutputTokens,
+      total_tokens: totalInputTokens + totalOutputTokens,
+      estimated_cost_usd: parseFloat(generationCost)
+    }
+  };
+}
+
+// Generic Manual Extract + DeepSeek Refine + DeepSeek Generate pipeline
+async function generateWithManualExtractDeepSeekRefineGenerate(productUrl, emailTemplate, customPrompt, modelId) {
+  console.log(`Starting hybrid approach: Manual extraction + ${modelId} refinement + ${modelId} generation`);
+
+  // Step 1: Manual HTML extraction (free)
+  let rawData;
+  try {
+    rawData = await extractProductDataManual(productUrl);
+  } catch (error) {
+    console.error('Manual extraction failed:', error);
+    throw new Error(`Manual extraction failed: ${error.message}. Please try a different extraction method.`);
+  }
+
+  // Step 2: AI refinement with DeepSeek
+  const { productData, refinementUsage } = await refineProductDataWithDeepSeek(rawData, productUrl, modelId);
+
+  // Step 3: Generate email with same DeepSeek model
+  const { content, generationUsage } = await generateEmailWithDeepSeek(emailTemplate, productData, customPrompt, modelId);
+
+  const totalUsage = {
+    input_tokens: refinementUsage.input_tokens + generationUsage.input_tokens,
+    output_tokens: refinementUsage.output_tokens + generationUsage.output_tokens,
+    total_tokens: refinementUsage.total_tokens + generationUsage.total_tokens,
+    estimated_cost_usd: refinementUsage.estimated_cost_usd + generationUsage.estimated_cost_usd,
+    breakdown: {
+      refinement: refinementUsage,
+      generation: generationUsage
+    }
+  };
+
+  console.log(`Manual Extract + ${modelId} Refine + Generate Complete:`, {
+    total_cost: `$${totalUsage.estimated_cost_usd.toFixed(6)}`,
+    refinement_cost: `$${refinementUsage.estimated_cost_usd.toFixed(6)}`,
+    generation_cost: `$${generationUsage.estimated_cost_usd.toFixed(6)}`
+  });
+
+  return { content, usage: totalUsage };
+}
+
 // Refine extracted data using GPT-5 Mini
 async function refineProductDataWith5Mini(rawData, productUrl) {
   const openaiClient = getOpenAIClient();
@@ -2337,6 +2583,12 @@ async function generateWithModel(model, prompt, tools, productUrl = null, emailT
       throw new Error('Product URL and email template are required for hybrid approach');
     }
     return await generateWithManualExtractClaudeRefineGenerate(productUrl, emailTemplate, customPrompt || '', modelConfig.refineModelId);
+  } else if (modelConfig.provider === 'manual-deepseek-hybrid') {
+    // Hybrid approach: Manual extract + DeepSeek refine + generate (V4 Flash or V4 Pro)
+    if (!productUrl || !emailTemplate) {
+      throw new Error('Product URL and email template are required for hybrid approach');
+    }
+    return await generateWithManualExtractDeepSeekRefineGenerate(productUrl, emailTemplate, customPrompt || '', modelConfig.refineModelId);
   } else {
     throw new Error(`Unsupported provider: ${modelConfig.provider}`);
   }
@@ -2370,7 +2622,7 @@ export async function POST(request) {
     const { productUrl, emailTemplate, customPrompt, model } = await request.json();
 
     // Validate model parameter
-    const validModels = ['claude-opus-4-6', 'claude-opus-4-5', 'claude-sonnet-4-5', 'gpt-4o', 'gpt-4o-mini', 'gpt-4o-extract-mini-generate', 'claude-sonnet-extract-mini-generate', 'claude-haiku-extract-mini-generate', 'manual-extract-mini-refine-generate', 'manual-extract-5-mini-refine-generate', 'manual-extract-opus-refine-generate', 'manual-extract-sonnet-refine-generate', 'manual-extract-haiku-refine-generate'];
+    const validModels = ['claude-opus-4-6', 'claude-opus-4-5', 'claude-sonnet-4-5', 'gpt-4o', 'gpt-4o-mini', 'gpt-4o-extract-mini-generate', 'claude-sonnet-extract-mini-generate', 'claude-haiku-extract-mini-generate', 'manual-extract-mini-refine-generate', 'manual-extract-5-mini-refine-generate', 'manual-extract-opus-refine-generate', 'manual-extract-sonnet-refine-generate', 'manual-extract-haiku-refine-generate', 'manual-extract-deepseek-flash-refine-generate', 'manual-extract-deepseek-pro-refine-generate'];
     const selectedModel = model || 'claude-opus-4-5'; // Default to Claude Opus for backward compatibility
     
     if (!validModels.includes(selectedModel)) {
@@ -2439,6 +2691,15 @@ export async function POST(request) {
       }
     }
 
+    // Check DeepSeek key for DeepSeek hybrid models
+    if (modelConfig.provider === 'manual-deepseek-hybrid') {
+      if (!process.env.DEEPSEEK_API_KEY) {
+        return Response.json({
+          error: 'DeepSeek API key is required but not configured. Please add DEEPSEEK_API_KEY to your environment variables or .env.local file.'
+        }, { status: 500 });
+      }
+    }
+
     // Check if hybrid models need both keys
     if (modelConfig.provider === 'claude-hybrid') {
       // Claude hybrid needs both Anthropic (extraction) and OpenAI (generation)
@@ -2454,7 +2715,7 @@ export async function POST(request) {
 
     // Generate with selected model
     // For hybrid approach, pass additional params; for others, just prompt and tools
-    const isHybridModel = selectedModel === 'gpt-4o-extract-mini-generate' || selectedModel === 'claude-sonnet-extract-mini-generate' || selectedModel === 'claude-haiku-extract-mini-generate' || selectedModel === 'manual-extract-mini-refine-generate' || selectedModel === 'manual-extract-5-mini-refine-generate' || selectedModel === 'manual-extract-opus-refine-generate' || selectedModel === 'manual-extract-sonnet-refine-generate' || selectedModel === 'manual-extract-haiku-refine-generate';
+    const isHybridModel = selectedModel === 'gpt-4o-extract-mini-generate' || selectedModel === 'claude-sonnet-extract-mini-generate' || selectedModel === 'claude-haiku-extract-mini-generate' || selectedModel === 'manual-extract-mini-refine-generate' || selectedModel === 'manual-extract-5-mini-refine-generate' || selectedModel === 'manual-extract-opus-refine-generate' || selectedModel === 'manual-extract-sonnet-refine-generate' || selectedModel === 'manual-extract-haiku-refine-generate' || selectedModel === 'manual-extract-deepseek-flash-refine-generate' || selectedModel === 'manual-extract-deepseek-pro-refine-generate';
     const result = isHybridModel
       ? await generateWithModel(selectedModel, prompt, tools, productUrl, emailTemplate, customPrompt)
       : await generateWithModel(selectedModel, prompt, tools);
