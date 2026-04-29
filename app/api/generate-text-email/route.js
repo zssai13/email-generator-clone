@@ -80,6 +80,18 @@ function getModelConfig(model) {
       provider: 'openai',
       apiType: 'responses'
     },
+    'gpt-5.5': {
+      modelId: 'gpt-5.5',
+      maxOutputTokens: 4000,
+      provider: 'openai',
+      apiType: 'responses'
+    },
+    'gpt-5.5-pro': {
+      modelId: 'gpt-5.5-pro',
+      maxOutputTokens: 4000,
+      provider: 'openai',
+      apiType: 'responses'
+    },
     'grok-4-1-fast': {
       modelId: 'grok-4-1-fast',
       maxOutputTokens: 4000,
@@ -174,6 +186,8 @@ function calculateCost(modelId, usage) {
   const pricing = {
     'gpt-5.2': { input: 0.002, output: 0.008 },
     'gpt-5.2-pro': { input: 0.010, output: 0.040 },
+    'gpt-5.5': { input: 0.005, output: 0.030 },         // $5/$30 per 1M
+    'gpt-5.5-pro': { input: 0.030, output: 0.180 },     // $30/$180 per 1M
     'grok-4-1-fast': { input: 0.003, output: 0.015 },  // Placeholder xAI pricing
     'claude-opus-4-6': { input: 0.005, output: 0.025 },  // $5/$25 per 1M tokens
     'claude-opus-4-7': { input: 0.005, output: 0.025 },  // $5/$25 per 1M tokens (placeholder, mirrors 4.6)
@@ -555,7 +569,7 @@ export async function POST(request) {
     const { businessInfo, emailGuidelines, systemPrompt, userPrompt, model, pageUrl, presummarize } = await request.json();
 
     // Validate model
-    const validModels = ['gpt-5.2', 'gpt-5.2-pro', 'grok-4-1-fast', 'claude-opus-4-6', 'claude-opus-4-7', 'deepseek-v4-pro'];
+    const validModels = ['gpt-5.2', 'gpt-5.2-pro', 'gpt-5.5', 'gpt-5.5-pro', 'grok-4-1-fast', 'claude-opus-4-6', 'claude-opus-4-7', 'deepseek-v4-pro'];
     const selectedModel = model || 'gpt-5.2';
 
     if (!validModels.includes(selectedModel)) {

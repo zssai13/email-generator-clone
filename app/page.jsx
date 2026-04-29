@@ -107,6 +107,8 @@ export default function Home() {
   const textEmailModelOptions = [
     { value: 'gpt-5.2', label: 'GPT-5.2' },
     { value: 'gpt-5.2-pro', label: 'GPT-5.2 Pro' },
+    { value: 'gpt-5.5', label: 'GPT-5.5' },
+    { value: 'gpt-5.5-pro', label: 'GPT-5.5 Pro' },
     { value: 'grok-4-1-fast', label: 'Grok 4.1 Fast (Reasoning)' },
     { value: 'claude-opus-4-6', label: 'Claude Opus 4.6' },
     { value: 'claude-opus-4-7', label: 'Claude Opus 4.7' },
